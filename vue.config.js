@@ -1,6 +1,7 @@
 const SpritePlugin = require('svg-sprite-loader/plugin')
 
 module.exports = {
+  baseUrl: '/muya-example/',
   outputDir: 'docs',
   chainWebpack: config => {
 
