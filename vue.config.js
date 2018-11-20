@@ -1,7 +1,9 @@
 const SpritePlugin = require('svg-sprite-loader/plugin')
 
 module.exports = {
+  outputDir: 'docs',
   chainWebpack: config => {
+
     const svgRule = config.module.rule('svg')
 
     // clear all existing loaders.
