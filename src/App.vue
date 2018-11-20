@@ -7,7 +7,7 @@
 <script>
   import Muya from './muya/lib'
   import TablePicker from './muya/lib/ui/tablePicker'
-  import QuickInsert from './muya/lib/ui/quickInsert'
+  // import QuickInsert from './muya/lib/ui/quickInsert'
   import CodePicker from './muya/lib/ui/codePicker'
   import EmojiPicker from './muya/lib/ui/emojiPicker'
   import ImagePathPicker from './muya/lib/ui/imagePicker'
@@ -16,15 +16,12 @@
 
   export default {
     name: 'app',
-    components: {
-      HelloWorld
-    },
     created () {
       this.$nextTick(() => {
         const ele = this.$refs.editor
 
         Muya.use(TablePicker)
-        Muya.use(QuickInsert)
+        // Muya.use(QuickInsert)
         Muya.use(CodePicker)
         Muya.use(EmojiPicker)
         Muya.use(ImagePathPicker)
@@ -40,7 +37,6 @@
   font-family: 'Avenir', Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  text-align: center;
   color: #2c3e50;
   margin-top: 60px;
 }

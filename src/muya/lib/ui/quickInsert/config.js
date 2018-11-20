@@ -19,7 +19,7 @@ import orderListIcon from '../../assets/icons/order_list.svg'
 // import sequenceIcon from '../../assets/icons/sequence.svg'
 // import mermaidIcon from '../../assets/icons/mermaid.svg'
 // import vegaIcon from '../../assets/icons/chart.svg'
-
+console.log(orderListIcon)
 export const quicInsertObj = {
   // 'diagram': [{
   //   title: 'Vega Chart',
