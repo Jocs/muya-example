@@ -1,19 +1,38 @@
 <template>
   <div id="app">
-    <img alt="Vue logo" src="./assets/logo.png">
-    <HelloWorld msg="Welcome to Your Vue.js App"/>
+    <div ref="editor"></div>
   </div>
 </template>
 
 <script>
-import HelloWorld from './components/HelloWorld.vue'
+  import Muya from './muya/lib'
+  import TablePicker from './muya/lib/ui/tablePicker'
+  import QuickInsert from './muya/lib/ui/quickInsert'
+  import CodePicker from './muya/lib/ui/codePicker'
+  import EmojiPicker from './muya/lib/ui/emojiPicker'
+  import ImagePathPicker from './muya/lib/ui/imagePicker'
+  import FormatPicker from './muya/lib/ui/formatPicker'
+  import './muya/themes/light.css'
 
-export default {
-  name: 'app',
-  components: {
-    HelloWorld
+  export default {
+    name: 'app',
+    components: {
+      HelloWorld
+    },
+    created () {
+      this.$nextTick(() => {
+        const ele = this.$refs.editor
+
+        Muya.use(TablePicker)
+        Muya.use(QuickInsert)
+        Muya.use(CodePicker)
+        Muya.use(EmojiPicker)
+        Muya.use(ImagePathPicker)
+        Muya.use(FormatPicker)
+        const { container } = this.editor = new Muya(ele, {})
+      })
+    }
   }
-}
 </script>
 
 <style>
