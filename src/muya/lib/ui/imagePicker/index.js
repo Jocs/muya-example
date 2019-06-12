@@ -4,6 +4,8 @@ import FolderIcon from '../../assets/icons/folder.svg'
 import ImageIcon from '../../assets/icons/image.svg'
 import UploadIcon from '../../assets/icons/upload.svg'
 
+import './index.css'
+
 const iconhash = {
   'icon-image': ImageIcon,
   'icon-folder': FolderIcon,
@@ -18,6 +20,7 @@ class ImagePathPicker extends BaseScrollFloat {
     this.renderArray = []
     this.oldVnode = null
     this.activeItem = null
+    this.floatBox.classList.add('ag-image-picker-wrapper')
     this.listen()
   }
 
@@ -40,11 +43,24 @@ class ImagePathPicker extends BaseScrollFloat {
     const { renderArray, oldVnode, scrollElement, activeItem } = this
     let children = renderArray.map((item) => {
       const { text, iconClass } = item
-      const icon = h('div.icon-wrapper', h('img', {
+      const icon = h('div.icon-wrapper', h('svg', {
         attrs: {
-          'src': `.${iconhash[iconClass].url}`
+          viewBox: iconhash[iconClass].viewBox,
+          'aria-hidden': 'true'
+        },
+        hook: {
+          prepatch (oldvnode, vnode) {
+            // cheat snabbdom that the pre block is changed!!!
+            oldvnode.children = []
+            oldvnode.elm.innerHTML = ''
+          }
+        }
+      }, h('use', {
+        attrs: {
+          'xlink:href': iconhash[iconClass].url
         }
       }))
+    )
       const textEle = h('div.language', text)
       const selector = activeItem === item ? 'li.item.active' : 'li.item'
       return h(selector, {

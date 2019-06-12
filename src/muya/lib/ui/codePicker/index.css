@@ -20,11 +20,15 @@
 
 .ag-list-picker:hover .active {
   background: transparent;
-  color: #606266;
 }
-.ag-list-picker .active, .ag-list-picker .item:hover {
- background-color: #ecf5ff;
- color: var(--activeColor);
+
+.ag-list-picker .item .language {
+  color: var(--editorColor);
+}
+
+.ag-list-picker .item:hover,
+.ag-list-picker .item.active {
+ background-color: var(--floatHoverColor);
 }
 
 .ag-list-picker .item .icon-wrapper {
@@ -39,6 +43,13 @@
   font-size: 18px;
 }
 
+.ag-list-picker .icon-wrapper > svg{
+  width: 20px;
+  height: 20px;
+  opacity: .6;
+  fill: var(--iconColor);
+}
+
 .ag-list-picker .item .icon-wrapper img {
   width: 20px;
   height: 20px;
@@ -48,13 +59,4 @@
   font-size: 14px;
   line-height: 35px;
   margin-left: 10px;
-}
-
-.ag-list-picker.dark:hover .active {
-  background: transparent;
-  color: currentColor;
-}
-.ag-list-picker.dark .active, .ag-list-picker.dark .item:hover {
- background-color: rgb(71, 72, 66);
- color: var(--activeColor);
 }

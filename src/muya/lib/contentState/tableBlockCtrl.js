@@ -1,5 +1,4 @@
 import { isLengthEven, getParagraphReference } from '../utils'
-import { TABLE_TOOLS } from '../config'
 
 const TABLE_BLOCK_REG = /^\|.*?(\\*)\|.*?(\\*)\|/
 
@@ -19,7 +18,9 @@ const tableBlockCtrl = ContentState => {
       const rowBlock = this.createBlock('tr')
       i === 0 ? this.appendChild(tHead, rowBlock) : this.appendChild(tBody, rowBlock)
       for (j = 0; j < columns; j++) {
-        const cell = this.createBlock(i === 0 ? 'th' : 'td', headerTexts && i === 0 ? headerTexts[j] : '')
+        const cell = this.createBlock(i === 0 ? 'th' : 'td', {
+          text: headerTexts && i === 0 ? headerTexts[j] : ''
+        })
         this.appendChild(rowBlock, cell)
         cell.align = ''
         cell.column = j
@@ -28,27 +29,51 @@ const tableBlockCtrl = ContentState => {
     return table
   }
 
-  ContentState.prototype.createFigure = function ({ rows, columns }) {
-    const { start, end } = this.cursor
-    const toolBar = this.createToolBar(TABLE_TOOLS, 'table')
-    const table = this.createTableInFigure({ rows, columns })
-    let figureBlock
-    if (start.key === end.key) {
-      const startBlock = this.getBlock(start.key)
-      const anchor = startBlock.type === 'span' ? this.getParent(startBlock) : startBlock
-      if (startBlock.text) {
-        figureBlock = this.createBlock('figure')
-        this.insertAfter(figureBlock, anchor)
-      } else {
-        figureBlock = anchor
-        figureBlock.type = 'figure'
-        figureBlock.functionType = 'table'
-        figureBlock.text = ''
-        figureBlock.children = []
-      }
-      this.appendChild(figureBlock, toolBar)
-      this.appendChild(figureBlock, table)
+  ContentState.prototype.closest = function (block, type) {
+    if (!block) {
+      return null
     }
+    if (block.type === type) {
+      return block
+    } else {
+      const parent = this.getParent(block)
+      return this.closest(parent, type)
+    }
+  }
+
+  ContentState.prototype.getAnchor = function (block) {
+    const { type, functionType } = block
+    switch (type) {
+      case 'span':
+        if (functionType === 'codeLine') {
+          return this.closest(block, 'figure') || this.closest(block, 'pre')
+        } else {
+          return this.getParent(block)
+        }
+
+      case 'th':
+      case 'td':
+        return this.closest(block, 'figure')
+
+      default:
+        return null
+    }
+  }
+
+  ContentState.prototype.createFigure = function ({ rows, columns }) {
+    const { end } = this.cursor
+    const table = this.createTableInFigure({ rows, columns })
+    const figureBlock = this.createBlock('figure')
+    figureBlock.functionType = 'table'
+    const endBlock = this.getBlock(end.key)
+    const anchor = this.getAnchor(endBlock)
+
+    if (!anchor) return
+    this.insertAfter(figureBlock, anchor)
+    if (/p|h\d/.test(anchor.type) && !endBlock.text) {
+      this.removeBlock(anchor)
+    }
+    this.appendChild(figureBlock, table)
     const key = table.children[0].children[0].children[0].key // fist cell key in thead
     const offset = 0
     this.cursor = {
@@ -88,13 +113,11 @@ const tableBlockCtrl = ContentState => {
     const rows = 2
 
     const table = this.createTableInFigure({ rows, columns }, rowHeader)
-    const toolBar = this.createToolBar(TABLE_TOOLS, 'table')
 
     block.type = 'figure'
     block.text = ''
     block.children = []
     block.functionType = 'table'
-    this.appendChild(block, toolBar)
     this.appendChild(block, table)
 
     return table.children[1].children[0].children[0] // first cell in tbody
@@ -325,8 +348,9 @@ const tableBlockCtrl = ContentState => {
             ? this.getPreSibling(targetCell)
             : (location === 'current' ? targetCell : this.getNextSibling(targetCell))
           if (removeCell === block) {
-            cursorBlock = this.getNextSibling(block)
+            cursorBlock = this.findNextBlockInLocation(block)
           }
+
           if (removeCell) this.removeBlock(removeCell)
           tableRow.children.forEach((cell, i) => {
             cell.column = i

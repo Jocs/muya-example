@@ -2,6 +2,7 @@ import ContentState from './contentState'
 import EventCenter from './eventHandler/event'
 import Clipboard from './eventHandler/clipboard'
 import Keyboard from './eventHandler/keyboard'
+import DragDrop from './eventHandler/dragDrop'
 import ClickEvent from './eventHandler/clickEvent'
 import { CLASS_OR_ID, MUYA_DEFAULT_OPTION } from './config'
 import { wordCount } from './utils'
@@ -17,11 +18,9 @@ class Muya {
   }
   constructor (container, options) {
     this.options = Object.assign({}, MUYA_DEFAULT_OPTION, options)
-    const { focusMode, theme, markdown } = this.options
-    this.focusMode = focusMode
-    this.theme = theme
+    const { markdown } = this.options
     this.markdown = markdown
-    this.container = getContainer(container)
+    this.container = getContainer(container, this.options)
     this.eventCenter = new EventCenter()
     this.tooltip = new ToolTip(this)
     // UI plugins
@@ -35,42 +34,85 @@ class Muya {
     this.clipboard = new Clipboard(this)
     this.clickEvent = new ClickEvent(this)
     this.keyboard = new Keyboard(this)
+    this.dragdrop = new DragDrop(this)
     this.init()
   }
 
   init () {
     const { container, contentState, eventCenter } = this
     contentState.stateRender.setContainer(container.children[0])
-    eventCenter.subscribe('stateChange', this.dispatchChange.bind(this))
-    eventCenter.attachDOMEvent(container, 'contextmenu', event => {
-      event.preventDefault()
-      event.stopPropagation()
-      const sectionChanges = this.contentState.selectionChange(this.contentState.cursor)
-      eventCenter.dispatch('contextmenu', event, sectionChanges)
-    })
-    contentState.listenForPathChange()
-    const { theme, focusMode, markdown } = this
-    this.setTheme(theme)
+    eventCenter.subscribe('stateChange', this.dispatchChange)
+    const { markdown } = this
+    const { focusMode } = this.options
     this.setMarkdown(markdown)
     this.setFocusMode(focusMode)
+    this.mutationObserver()
+    eventCenter.attachDOMEvent(container, 'focus', () => {
+      eventCenter.dispatch('focus')
+    })
+    eventCenter.attachDOMEvent(container, 'blur', () => {
+      eventCenter.dispatch('blur')
+    })
   }
 
-  dispatchChange () {
+  mutationObserver () {
+    // Select the node that will be observed for mutations
+    const { container } = this
+
+    // Options for the observer (which mutations to observe)
+    const config = { childList: true, subtree: true }
+
+    // Callback function to execute when mutations are observed
+    const callback = function(mutationsList, observer) {
+      for(const mutation of mutationsList) {
+        if (mutation.type === 'childList') {
+          const { removedNodes, target } = mutation
+          // If the code executes any of the following `if` statements, the editor has gone wrong.
+          // need to report bugs.
+          if (removedNodes && removedNodes.length) {
+            const hasTable = Array.from(removedNodes).some(node => node.nodeType === 1 && node.closest('table.ag-paragraph'))
+            if (hasTable) {
+              console.warn('There was a problem with the table deletion.')
+            }
+          }
+
+          if (target.getAttribute('id') === 'ag-editor-id' && target.childElementCount === 0) {
+            // TODO: the editor can not be input any more. report bugs and recoveryr...
+            console.warn('editor crashed, and can not be input any more.')
+          }
+        }
+      }
+    }
+
+    // Create an observer instance linked to the callback function
+    const observer = new MutationObserver(callback)
+
+    // Start observing the target node for configured mutations
+    observer.observe(container, config)
+  }
+
+  dispatchChange = () => {
     const { eventCenter } = this
     const markdown = this.markdown = this.getMarkdown()
     const wordCount = this.getWordCount(markdown)
     const cursor = this.getCursor()
     const history = this.getHistory()
-    eventCenter.dispatch('change', { markdown, wordCount, cursor, history })
+    const toc = this.getTOC()
+    eventCenter.dispatch('change', { markdown, wordCount, cursor, history, toc })
   }
 
   getMarkdown () {
     const blocks = this.contentState.getBlocks()
-    return new ExportMarkdown(blocks).generate()
+    const listIndentation = this.contentState.listIndentation
+    return new ExportMarkdown(blocks, listIndentation).generate()
   }
 
   getHistory () {
     return this.contentState.getHistory()
+  }
+
+  getTOC () {
+    return this.contentState.getTOC()
   }
 
   setHistory (history) {
@@ -81,14 +123,14 @@ class Muya {
     return this.contentState.history.clearHistory()
   }
 
-  exportStyledHTML (filename) {
+  exportStyledHTML (title = '', printOptimization = false) {
     const { markdown } = this
-    return new ExportHtml(markdown).generate(filename)
+    return new ExportHtml(markdown, this).generate(title, printOptimization)
   }
 
   exportHtml () {
     const { markdown } = this
-    return new ExportHtml(markdown).renderHtml()
+    return new ExportHtml(markdown, this).renderHtml()
   }
 
   getWordCount (markdown) {
@@ -107,7 +149,9 @@ class Muya {
     this.contentState.importMarkdown(newMarkdown)
     this.contentState.importCursor(cursor)
     this.contentState.render(isRenderCursor)
-    this.dispatchChange()
+    setTimeout(() => {
+      this.dispatchChange()
+    }, 0)
   }
 
   createTable (tableChecker) {
@@ -119,23 +163,14 @@ class Muya {
   }
 
   setFocusMode (bool) {
-    const { container, focusMode } = this
+    const { container } = this
+    const { focusMode } = this.options
     if (bool && !focusMode) {
       container.classList.add(CLASS_OR_ID['AG_FOCUS_MODE'])
     } else {
       container.classList.remove(CLASS_OR_ID['AG_FOCUS_MODE'])
     }
-    this.focusMode = bool
-  }
-
-  setTheme (name) {
-    if (!name) return
-    const { eventCenter } = this
-    this.theme = name
-    // Render cursor and refresh code block
-    this.contentState.render(true)
-    // notice the ui components to change theme
-    eventCenter.dispatch('theme-change', name)
+    this.options.focusMode = bool
   }
 
   setFont ({ fontSize, lineHeight }) {
@@ -143,26 +178,42 @@ class Muya {
     if (lineHeight) this.contentState.lineHeight = lineHeight
   }
 
-  setListItemPreference (preferLooseListItem) {
-    this.contentState.preferLooseListItem = preferLooseListItem
-  }
-
   setTabSize (tabSize) {
     if (!tabSize || typeof tabSize !== 'number') {
       tabSize = 4
     } else if (tabSize < 1) {
       tabSize = 1
+    } else if (tabSize > 4) {
+      tabSize = 4
     }
-
     this.contentState.tabSize = tabSize
+  }
+
+  setListIndentation (listIndentation) {
+    if (typeof listIndentation === 'number') {
+      if (listIndentation < 1 || listIndentation > 4) {
+        listIndentation = 1
+      }
+    } else if (listIndentation !== 'dfm') {
+      listIndentation = 1
+    }
+    this.contentState.listIndentation = listIndentation
   }
 
   updateParagraph (type) {
     this.contentState.updateParagraph(type)
   }
 
-  insertParagraph (location/* before or after */) {
-    this.contentState.insertParagraph(location)
+  duplicate () {
+    this.contentState.duplicate()
+  }
+
+  deleteParagraph () {
+    this.contentState.deleteParagraph()
+  }
+
+  insertParagraph (location/* before or after */, text = '', outMost = false) {
+    this.contentState.insertParagraph(location, text, outMost)
   }
 
   editTable (data) {
@@ -182,20 +233,12 @@ class Muya {
     this.container.blur()
   }
 
-  showAutoImagePath (files) {
-    const list = files.map(f => {
-      const iconClass = f.type === 'directory' ? 'icon-folder' : 'icon-image'
-      return Object.assign(f, { iconClass, text: f.file + (f.type === 'directory' ? '/' : '') })
-    })
-    this.contentState.showAutoImagePath(list)
-  }
-
   format (type) {
     this.contentState.format(type)
   }
 
-  insertImage (url) {
-    this.contentState.insertImage(url)
+  insertImage (imageInfo) {
+    this.contentState.insertImage(imageInfo)
   }
 
   search (value, opt) {
@@ -237,6 +280,16 @@ class Muya {
     this.contentState.history.redo()
   }
 
+  selectAll () {
+    if (this.hasFocus()) {
+      this.contentState.selectAll()
+    }
+    const activeElement = document.activeElement
+    if (activeElement.nodeName === 'INPUT') {
+      activeElement.select()
+    }
+  }
+
   copyAsMarkdown () {
     this.clipboard.copyAsMarkdown()
   }
@@ -253,6 +306,30 @@ class Muya {
     this.clipboard.copy(name)
   }
 
+  setOptions (options, needRender = false) {
+    Object.assign(this.options, options)
+    if (needRender) {
+      this.contentState.render()
+    }
+    // Set quick insert hint visibility
+    const hideQuickInsertHint = options['hideQuickInsertHint']
+    if (typeof hideQuickInsertHint !== 'undefined') {
+      const hasClass = this.container.classList.contains('ag-show-quick-insert-hint')
+      if (hideQuickInsertHint && hasClass) {
+        this.container.classList.remove('ag-show-quick-insert-hint')
+      } else if (!hideQuickInsertHint && !hasClass) {
+        this.container.classList.add('ag-show-quick-insert-hint')
+      }
+    }
+    if (options.bulletListMarker) {
+      this.contentState.turndownConfig.bulletListMarker = options.bulletListMarker
+    }
+  }
+
+  hideAllFloatTools () {
+    return this.keyboard.hideAllFloatTools()
+  }
+
   destroy () {
     this.contentState.clear()
     this.quickInsert.destroy()
@@ -267,7 +344,8 @@ class Muya {
 /**
   * [ensureContainerDiv ensure container element is div]
   */
-function getContainer (originContainer) {
+function getContainer (originContainer, options) {
+  const { hideQuickInsertHint } = options
   const container = document.createElement('div')
   const rootDom = document.createElement('div')
   const attrs = originContainer.attributes
@@ -275,6 +353,10 @@ function getContainer (originContainer) {
   Array.from(attrs).forEach(attr => {
     container.setAttribute(attr.name, attr.value)
   })
+
+  if (!hideQuickInsertHint) {
+    container.classList.add('ag-show-quick-insert-hint')
+  }
 
   container.setAttribute('contenteditable', true)
   container.setAttribute('autocorrect', false)

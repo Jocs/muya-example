@@ -48,20 +48,21 @@ class FormatPicker extends BaseFloat {
   render () {
     const { icons, oldVnode, formatContainer, formats } = this
     const children = icons.map(i => {
-      const icon = h('svg', {
-        attrs: {
-          'viewBox': i.icon.viewBox,
-          'aria-hidden': 'true'
-        }
-      }, [h('use', {
-        attrs: {
-          'xlink:href': `.${i.icon.url}`
-        }
-      })]
-      )
-      const iconWrapper = h('div.icon-wrapper', icon)
+      let icon
+      let iconWrapperSelector
+      if (i.icon) {
+        // SVG icon Asset
+        iconWrapperSelector = 'div.icon-wrapper'
+        icon = h('i.icon', h(`i.icon-inner`, {
+          style: {
+            background: `url(${i.icon}) no-repeat`,
+            'background-size': '100%'
+          }
+        }, ''))
+      }
+      const iconWrapper = h(iconWrapperSelector, icon)
       let itemSelector = `li.item.${i.type}`
-      if (formats.some(f => f.type === i.type)) {
+      if (formats.some(f => f.type === i.type || f.type === 'html_tag' && f.tag === i.type)) {
         itemSelector += '.active'
       }
       return h(itemSelector, {

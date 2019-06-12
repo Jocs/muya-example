@@ -1,7 +1,7 @@
 import { EVENT_KEYS } from '../config'
 import selection from '../selection'
 import { findNearestParagraph } from '../selection/dom'
-import { getParagraphReference } from '../utils'
+import { getParagraphReference, getImageInfo } from '../utils'
 import { checkEditEmoji } from '../ui/emojis'
 
 class Keyboard {
@@ -19,9 +19,23 @@ class Keyboard {
 
   listen () {
     // cache shown float box
-    this.muya.eventCenter.subscribe('muya-float', (name, status) => {
-      status ? this.shownFloat.add(name) : this.shownFloat.delete(name)
+    this.muya.eventCenter.subscribe('muya-float', (tool, status) => {
+      status ? this.shownFloat.add(tool) : this.shownFloat.delete(tool)
+      if (tool.name === 'ag-front-menu' && !status) {
+        const seletedParagraph = this.muya.container.querySelector('.ag-selected')
+        if (seletedParagraph) {
+          this.muya.contentState.selectedBlock = null
+          // prevent rerender, so change the class manually.
+          seletedParagraph.classList.toggle('ag-selected')
+        }
+      }
     })
+  }
+
+  hideAllFloatTools () {
+    for (const tool of this.shownFloat) {
+      tool.hide()
+    }
   }
 
   recordIsComposed () {
@@ -54,6 +68,18 @@ class Keyboard {
         return
       }
 
+      // Cursor outside editor area or over not editable elements.
+      if (event.target.closest('[contenteditable=false]')) {
+        return
+      }
+
+      // We need check cursor is null, because we may copy the html preview content,
+      // and no need to dispatch change.
+      const { start, end } = selection.getCursorRange()
+      if (!start || !end) {
+        return
+      }
+
       if (timer) clearTimeout(timer)
       timer = setTimeout(() => {
         const selectionChanges = contentState.selectionChange()
@@ -70,8 +96,36 @@ class Keyboard {
 
   keydownBinding () {
     const { container, eventCenter, contentState } = this.muya
+    const docHandler = event => {
+      switch (event.code) {
+        case EVENT_KEYS.Enter:
+          return contentState.docEnterHandler(event)
+        case EVENT_KEYS.Space: {
+          if (contentState.selectedImage) {
+            const { src } = getImageInfo(contentState.selectedImage.token.src)
+            if (src) {
+              eventCenter.dispatch('preview-image', {
+                data: src
+              })
+            }
+          }
+          break
+        }
+        case EVENT_KEYS.Backspace: {
+          return contentState.docBackspaceHandler(event)
+        }
+        case EVENT_KEYS.ArrowUp: // fallthrough
+        case EVENT_KEYS.ArrowDown: // fallthrough
+        case EVENT_KEYS.ArrowLeft: // fallthrough
+        case EVENT_KEYS.ArrowRight: // fallthrough
+          return contentState.docArrowHandler(event)
+      }
+    }
 
     const handler = event => {
+      if (event.metaKey || event.ctrlKey) {
+        container.classList.add('ag-meta-or-ctrl')
+      }
       if (
         this.shownFloat.size > 0 &&
         (
@@ -82,8 +136,18 @@ class Keyboard {
           event.key === EVENT_KEYS.ArrowDown
         )
       ) {
+        let needPreventDefault = false
+
+        for (const tool of this.shownFloat) {
+          if (tool.name === 'ag-format-picker' || tool.name === 'ag-table-picker') {
+            needPreventDefault = true
+            break
+          }
+        }
+        if (needPreventDefault) {
+          event.preventDefault()
+        }
         event.stopPropagation()
-        event.preventDefault()
         return
       }
       switch (event.key) {
@@ -120,6 +184,7 @@ class Keyboard {
     }
 
     eventCenter.attachDOMEvent(container, 'keydown', handler)
+    eventCenter.attachDOMEvent(document, 'keydown', docHandler)
   }
 
   inputBinding () {
@@ -150,10 +215,12 @@ class Keyboard {
   keyupBinding () {
     const { container, eventCenter, contentState } = this.muya
     const handler = event => {
+      container.classList.remove('ag-meta-or-ctrl')
       // check if edit emoji
       const node = selection.getSelectionStart()
       const paragraph = findNearestParagraph(node)
       const emojiNode = checkEditEmoji(node)
+      contentState.selectedImage = null
       if (
         paragraph &&
         emojiNode &&
@@ -174,36 +241,31 @@ class Keyboard {
           emojiNode
         })
       }
-      // is show format float box?
-      const { start, end } = selection.getCursorRange()
 
+      const { anchor, focus, start, end } = selection.getCursorRange()
+      if (!anchor || !focus) {
+        return
+      }
       if (
-        this.shownFloat.size === 0 &&
         !this.isComposed
       ) {
-        const { start: oldStart, end: oldEnd } = contentState.cursor
+        const { anchor: oldAnchor, focus: oldFocus } = contentState.cursor
         if (
-          start.key !== oldStart.key ||
-          start.offset !== oldStart.offset ||
-          end.key !== oldEnd.key ||
-          end.offset !== oldEnd.offset
+          anchor.key !== oldAnchor.key ||
+          anchor.offset !== oldAnchor.offset ||
+          focus.key !== oldFocus.key ||
+          focus.offset !== oldFocus.offset
         ) {
           const needRender = contentState.checkNeedRender(contentState.cursor) || contentState.checkNeedRender({ start, end })
-          contentState.cursor = { start, end }
+          contentState.cursor = { anchor, focus }
           if (needRender) {
             return contentState.partialRender()
           }
         }
       }
 
-      // hide image-path float box
-      const imageTextNode = contentState.getImageTextNode()
-      if (!imageTextNode) {
-        eventCenter.dispatch('muya-image-picker', { list: [] })
-      }
-
-      const block = contentState.getBlock(start.key)
-      if (start.key === end.key && start.offset !== end.offset && block.functionType !== 'codeLine') {
+      const block = contentState.getBlock(anchor.key)
+      if (anchor.key === focus.key && anchor.offset !== focus.offset && block.functionType !== 'codeLine') {
         const reference = contentState.getPositionReference()
         const { formats } = contentState.selectionFormats()
         eventCenter.dispatch('muya-format-picker', { reference, formats })

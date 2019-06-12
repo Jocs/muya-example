@@ -2,21 +2,18 @@
  * This file is copy from [medium-editor](https://github.com/yabwe/medium-editor)
  * and customize for specialized use.
  */
+import Cursor from './cursor'
+import { CLASS_OR_ID } from '../config'
 import {
   isBlockContainer,
   traverseUp,
-  isAganippeEditorElement,
   getFirstSelectableLeafNode,
-  isElementAtBeginningOfBlock,
-  findPreviousSibling,
   getClosestBlockContainer,
   getCursorPositionWithinMarkedText,
-  compareParagraphsOrder,
   findNearestParagraph,
-  getTextContent
+  getTextContent,
+  getOffsetOfParagraph
 } from './dom'
-
-import { CLASS_OR_ID } from '../config'
 
 const filterOnlyParentElements = node => {
   return isBlockContainer(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
@@ -40,60 +37,6 @@ class Selection {
     current = range.commonAncestorContainer
 
     return traverseUp(current, testElementFunction)
-  }
-
-  getSelectionElement (contentWindow) {
-    return this.findMatchingSelectionParent(el => {
-      return isAganippeEditorElement(el)
-    }, contentWindow)
-  }
-
-  // https://stackoverflow.com/questions/17678843/cant-restore-selection-after-html-modify-even-if-its-the-same-html
-  // Tim Down
-  exportSelection (root) {
-    if (!root) {
-      return null
-    }
-
-    let selectionState = null
-    const selection = this.doc.getSelection()
-
-    if (selection.rangeCount > 0) {
-      const range = selection.getRangeAt(0)
-      const preSelectionRange = range.cloneRange()
-
-      preSelectionRange.selectNodeContents(root)
-      preSelectionRange.setEnd(range.startContainer, range.startOffset)
-
-      const start = preSelectionRange.toString().length
-      selectionState = {
-        start,
-        end: start + range.toString().length
-      }
-
-      // Check to see if the selection starts with any images
-      // if so we need to make sure the the beginning of the selection is
-      // set correctly when importing selection
-      if (this.doesRangeStartWithImages(range)) {
-        selectionState.startsWithImage = true
-      }
-
-      // Check to see if the selection has any trailing images
-      // if so, this this means we need to look for them when we import selection
-      const trailingImageCount = this.getTrailingImageCount(root, selectionState, range.endContainer, range.endOffset)
-      if (trailingImageCount) {
-        selectionState.trailingImageCount = trailingImageCount
-      }
-
-      // If start = 0 there may still be an empty paragraph before it, but we don't care.
-      if (start !== 0) {
-        const emptyBlocksIndex = this.getIndexRelativeToAdjacentEmptyBlocks(root, range.startContainer, range.startOffset)
-        if (emptyBlocksIndex !== -1) {
-          selectionState.emptyBlocksIndex = emptyBlocksIndex
-        }
-      }
-    }
-    return selectionState
   }
 
   // https://stackoverflow.com/questions/17678843/cant-restore-selection-after-html-modify-even-if-its-the-same-html
@@ -314,207 +257,6 @@ class Selection {
     return range
   }
 
-  // Returns -1 unless the cursor is at the beginning of a paragraph/block
-  // If the paragraph/block is preceded by empty paragraphs/block (with no text)
-  // it will return the number of empty paragraphs before the cursor.
-  // Otherwise, it will return 0, which indicates the cursor is at the beginning
-  // of a paragraph/block, and not at the end of the paragraph/block before it
-  getIndexRelativeToAdjacentEmptyBlocks (root, cursorContainer, cursorOffset) {
-    // If there is text in front of the cursor, that means there isn't only empty blocks before it
-    if (cursorContainer.textContent.length > 0 && cursorOffset > 0) {
-      return -1
-    }
-
-    // Check if the block that contains the cursor has any other text in front of the cursor
-    let node = cursorContainer
-    if (node.nodeType !== 3) {
-      node = cursorContainer.childNodes[cursorOffset]
-    }
-    if (node) {
-      // The element isn't at the beginning of a block, so it has content before it
-      if (!isElementAtBeginningOfBlock(node)) {
-        return -1
-      }
-
-      const previousSibling = findPreviousSibling(node)
-      // If there is no previous sibling, this is the first text element in the editor
-      if (!previousSibling) {
-        return -1
-      } else if (previousSibling.nodeValue) {
-        // If the previous sibling has text, then there are no empty blocks before this
-        return -1
-      }
-    }
-
-    // Walk over block elements, counting number of empty blocks between last piece of text
-    // and the block the cursor is in
-    const closestBlock = getClosestBlockContainer(cursorContainer)
-    const treeWalker = this.doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, filterOnlyParentElements, false)
-    let emptyBlocksCount = 0
-    while (treeWalker.nextNode()) {
-      const blockIsEmpty = treeWalker.currentNode.textContent === ''
-      if (blockIsEmpty || emptyBlocksCount > 0) {
-        emptyBlocksCount += 1
-      }
-      if (treeWalker.currentNode === closestBlock) {
-        return emptyBlocksCount
-      }
-      if (!blockIsEmpty) {
-        emptyBlocksCount = 0
-      }
-    }
-
-    return emptyBlocksCount
-  }
-
-  // Returns true if the selection range begins with an image tag
-  // Returns false if the range starts with any non empty text nodes
-  doesRangeStartWithImages (range) {
-    if (range.startOffset !== 0 || range.startContainer.nodeType !== 1) {
-      return false
-    }
-
-    if (range.startContainer.nodeName.toLowerCase() === 'img') {
-      return true
-    }
-
-    const img = range.startContainer.querySelector('img')
-    if (!img) {
-      return false
-    }
-
-    const treeWalker = this.doc.createTreeWalker(range.startContainer, NodeFilter.SHOW_ALL, null, false)
-    while (treeWalker.nextNode()) {
-      const next = treeWalker.currentNode
-      // If we hit the image, then there isn't any text before the image so
-      // the image is at the beginning of the range
-      if (next === img) {
-        break
-      }
-      // If we haven't hit the iamge, but found text that contains content
-      // then the range doesn't start with an image
-      if (next.nodeValue) {
-        return false
-      }
-    }
-
-    return true
-  }
-
-  getTrailingImageCount (root, selectionState, endContainer, endOffset) {
-    // If the endOffset of a range is 0, the endContainer doesn't contain images
-    // If the endContainer is a text node, there are no trailing images
-    if (endOffset === 0 || endContainer.nodeType !== 1) {
-      return 0
-    }
-
-    // If the endContainer isn't an image, and doesn't have an image descendants
-    // there are no trailing images
-    if (endContainer.nodeName.toLowerCase() !== 'img' && !endContainer.querySelector('img')) {
-      return 0
-    }
-
-    let lastNode = endContainer.childNodes[endOffset - 1]
-    while (lastNode.hasChildNodes()) {
-      lastNode = lastNode.lastChild
-    }
-
-    let node = root
-    const nodeStack = []
-    let charIndex = 0
-    let foundStart = false
-    let foundEnd = false
-    let stop = false
-    let nextCharIndex
-    let trailingImages = 0
-
-    while (!stop && node) {
-      // Only iterate over elements and text nodes
-      if (node.nodeType > 3) {
-        node = nodeStack.pop()
-        continue
-      }
-
-      if (node.nodeType === 3 && !foundEnd) {
-        trailingImages = 0
-        nextCharIndex = charIndex + node.length
-        if (!foundStart && selectionState.start >= charIndex && selectionState.start <= nextCharIndex) {
-          foundStart = true
-        }
-        if (foundStart && selectionState.end >= charIndex && selectionState.end <= nextCharIndex) {
-          foundEnd = true
-        }
-        charIndex = nextCharIndex
-      } else {
-        if (node.nodeName.toLowerCase() === 'img') {
-          trailingImages++
-        }
-
-        if (node === lastNode) {
-          stop = true
-        } else if (node.nodeType === 1) {
-          // this is an element
-          // add all its children to the stack
-          let i = node.childNodes.length - 1
-          while (i >= 0) {
-            nodeStack.push(node.childNodes[i])
-            i -= 1
-          }
-        }
-      }
-
-      if (!stop) {
-        node = nodeStack.pop()
-      }
-    }
-
-    return trailingImages
-  }
-
-  // determine if the current selection contains any 'content'
-  // content being any non-white space text or an image
-  selectionContainsContent () {
-    const sel = this.doc.getSelection()
-
-    // collapsed selection or selection withour range doesn't contain content
-    if (!sel || sel.isCollapsed || !sel.rangeCount) {
-      return false
-    }
-
-    // if toString() contains any text, the selection contains some content
-    if (sel.toString().trim() !== '') {
-      return true
-    }
-
-    // if selection contains only image(s), it will return empty for toString()
-    // so check for an image manually
-    const selectionNode = this.getSelectedParentElement(sel.getRangeAt(0))
-    if (selectionNode) {
-      if (selectionNode.nodeName.toLowerCase() === 'img' ||
-        (selectionNode.nodeType === 1 && selectionNode.querySelector('img'))) {
-        return true
-      }
-    }
-
-    return false
-  }
-
-  selectionInContentEditableFalse (contentWindow) {
-    // determine if the current selection is exclusively inside
-    // a contenteditable="false", though treat the case of an
-    // explicit contenteditable="true" inside a "false" as false.
-    let sawtrue
-    const sawfalse = this.findMatchingSelectionParent(function (el) {
-      const ce = el && el.getAttribute('contenteditable')
-      if (ce === 'true') {
-        sawtrue = true
-      }
-      return el.nodeName !== '#text' && ce === 'false'
-    }, contentWindow)
-
-    return !sawtrue && sawfalse
-  }
-
   // https://stackoverflow.com/questions/4176923/html-of-selected-text
   // by Tim Down
   getSelectionHtml () {
@@ -593,61 +335,6 @@ class Selection {
     }
   }
 
-  // https://stackoverflow.com/questions/15867542/range-object-get-selection-parent-node-chrome-vs-firefox
-  rangeSelectsSingleNode (range) {
-    const startNode = range.startContainer
-    return startNode === range.endContainer &&
-    startNode.hasChildNodes() &&
-    range.endOffset === range.startOffset + 1
-  }
-
-  getSelectedParentElement (range) {
-    if (!range) {
-      return null
-    }
-
-    // Selection encompasses a single element
-    if (this.rangeSelectsSingleNode(range) && range.startContainer.childNodes[range.startOffset].nodeType !== 3) {
-      return range.startContainer.childNodes[range.startOffset]
-    }
-
-    // Selection range starts inside a text node, so get its parent
-    if (range.startContainer.nodeType === 3) {
-      return range.startContainer.parentNode
-    }
-
-    // Selection starts inside an element
-    return range.startContainer
-  }
-
-  getSelectedElements () {
-    const selection = this.doc.getSelection()
-    let range
-    let toRet
-    let currNode
-
-    if (!selection.rangeCount || selection.isCollapsed || !selection.getRangeAt(0).commonAncestorContainer) {
-      return []
-    }
-
-    range = selection.getRangeAt(0)
-
-    if (range.commonAncestorContainer.nodeType === 3) {
-      toRet = []
-      currNode = range.commonAncestorContainer
-      while (currNode.parentNode && currNode.parentNode.childNodes.length === 1) {
-        toRet.push(currNode.parentNode)
-        currNode = currNode.parentNode
-      }
-
-      return toRet
-    }
-
-    return [].filter.call(range.commonAncestorContainer.getElementsByTagName('*'), function (el) {
-      return (typeof selection.containsNode === 'function') ? selection.containsNode(el, true) : true
-    })
-  }
-
   selectNode (node) {
     const range = this.doc.createRange()
     range.selectNodeContents(node)
@@ -664,6 +351,11 @@ class Selection {
     }
     this.selectRange(range)
     return range
+  }
+
+  setFocus (focusNode, focusOffset) {
+    const selection = this.doc.getSelection()
+    selection.extend(focusNode, focusOffset)
   }
 
   /**
@@ -717,9 +409,9 @@ class Selection {
   }
 
   setCursorRange (cursorRange) {
-    const { start, end } = cursorRange
-    const startParagraph = document.querySelector(`#${start.key}`)
-    const endParagraph = document.querySelector(`#${end.key}`)
+    const { anchor, focus } = cursorRange
+    const anchorParagraph = document.querySelector(`#${anchor.key}`)
+    const focusParagraph = document.querySelector(`#${focus.key}`)
     const getNodeAndOffset = (node, offset) => {
       if (node.nodeType === 3) {
         return {
@@ -733,88 +425,160 @@ class Selection {
       let count = 0
       for (i = 0; i < len; i++) {
         const child = childNodes[i]
-        if (count + getTextContent(child, [ CLASS_OR_ID['AG_MATH_RENDER'] ]).length >= offset) {
-          return getNodeAndOffset(child, offset - count)
+        const textLength = getTextContent(child, [ CLASS_OR_ID['AG_MATH_RENDER'], CLASS_OR_ID['AG_RUBY_RENDER'] ]).length
+        if (child.classList && child.classList.contains(CLASS_OR_ID['AG_FRONT_ICON'])) continue
+        if (count + textLength >= offset) {
+          if (
+            child.classList && child.classList.contains('ag-inline-image')
+          ) {
+            const imageContainer = child.querySelector('.ag-image-container')
+            const hasImg = imageContainer.querySelector('img')
+            if (!hasImg) {
+              return {
+                node: child,
+                offset: 0
+              }
+            }
+            if (count + textLength === offset) {
+              if (child.nextElementSibling) {
+                return {
+                  node: child.nextElementSibling,
+                  offset: 0
+                }
+              } else {
+                return {
+                  node: imageContainer,
+                  offset: 3
+                }
+              }
+            } else if (count === offset && count === 0) {
+              return {
+                node: imageContainer,
+                offset: 2
+              }
+            } else {
+              return {
+                node: child,
+                offset: 0
+              }
+            }
+          } else {
+            return getNodeAndOffset(child, offset - count)
+          }
         } else {
-          count += getTextContent(child, [ CLASS_OR_ID['AG_MATH_RENDER'] ]).length
+          count += textLength
         }
       }
       return { node, offset }
     }
 
-    let { node: startNode, offset: startOffset } = getNodeAndOffset(startParagraph, start.offset)
-    let { node: endNode, offset: endOffset } = getNodeAndOffset(endParagraph, end.offset)
-    startOffset = Math.min(startOffset, startNode.textContent.length)
-    endOffset = Math.min(endOffset, endNode.textContent.length)
+    let { node: anchorNode, offset: anchorOffset } = getNodeAndOffset(anchorParagraph, anchor.offset)
+    let { node: focusNode, offset: focusOffset } = getNodeAndOffset(focusParagraph, focus.offset)
+    if (anchorNode.nodeType === 3 || anchorNode.nodeType === 1 && !anchorNode.classList.contains('ag-image-container')) {
+      anchorOffset = Math.min(anchorOffset, anchorNode.textContent.length)
+      focusOffset = Math.min(focusOffset, focusNode.textContent.length)
+    }
 
-    this.select(startNode, startOffset, endNode, endOffset)
+    // First set the anchor node and anchor offset, make it collapsed
+    this.select(anchorNode, anchorOffset)
+    // Secondly, set the focus node and focus offset.
+    this.setFocus(focusNode, focusOffset)
+  }
+
+  isValidCursorNode (node) {
+    if (!node) return false
+    if (node.nodeType === 3) {
+      node = node.parentNode
+    }
+    return node.closest('span.ag-paragraph') ||
+      node.closest('th.ag-paragraph') ||
+      node.closest('td.ag-paragraph')
   }
 
   getCursorRange () {
     let { anchorNode, anchorOffset, focusNode, focusOffset } = this.doc.getSelection()
-
-    // when the first paragraph is task list, press ctrl + a, then press backspace will cause bug
-    // use code bellow to fix the bug
-    const findFirstTextNode = anchor => {
-      if (anchor.nodeType === 3) return anchor
-      const children = anchor.childNodes
-      for (const node of children) {
-        if (node.nodeName !== 'INPUT') {
-          return findFirstTextNode(node)
-        }
-      }
-    }
-    if (anchorNode.nodeName === 'LI') {
-      anchorNode = findFirstTextNode(anchorNode)
-    }
-
-    let startParagraph = findNearestParagraph(anchorNode)
-    let endParagraph = findNearestParagraph(focusNode)
-
-    const getOffsetOfParagraph = (node, paragraph) => {
-      let offset = 0
-      let preSibling = node
-
-      if (node === paragraph) return offset
-
-      do {
-        preSibling = preSibling.previousSibling
-        if (preSibling) {
-          offset += getTextContent(preSibling, [ CLASS_OR_ID['AG_MATH_RENDER'] ]).length
-        }
-      } while (preSibling)
-      return (node === paragraph || node.parentNode === paragraph)
-        ? offset
-        : offset + getOffsetOfParagraph(node.parentNode, paragraph)
+    const isAnchorValid = this.isValidCursorNode(anchorNode)
+    const isFocusValid = this.isValidCursorNode(focusNode)
+    let needFix = false
+    if (!isAnchorValid && isFocusValid) {
+      needFix = true
+      anchorNode = focusNode
+      anchorOffset = focusOffset
+    } else if (isAnchorValid && !isFocusValid) {
+      needFix = true
+      focusNode = anchorNode
+      focusOffset = anchorOffset
+    } else if (!isAnchorValid && !isFocusValid) {
+      const editor = document.querySelector('#ag-editor-id').parentNode
+      editor.blur()
+      return new Cursor({
+        start: null,
+        end: null,
+        anchor: null,
+        focus: null
+      })
     }
 
-    if (startParagraph === endParagraph) {
-      const key = startParagraph.id
-      const offset1 = getOffsetOfParagraph(anchorNode, startParagraph) + anchorOffset
-      const offset2 = getOffsetOfParagraph(focusNode, endParagraph) + focusOffset
-      return {
-        start: { key, offset: Math.min(offset1, offset2) },
-        end: { key, offset: Math.max(offset1, offset2) }
-      }
-    } else {
-      const order = compareParagraphsOrder(startParagraph, endParagraph)
-
-      const rawCursor = {
-        start: {
-          key: startParagraph.id,
-          offset: getOffsetOfParagraph(anchorNode, startParagraph) + anchorOffset
-        },
-        end: {
-          key: endParagraph.id,
-          offset: getOffsetOfParagraph(focusNode, endParagraph) + focusOffset
-        }
-      }
-      if (order) {
-        return rawCursor
-      } else {
-        return { start: rawCursor.end, end: rawCursor.start }
-      }
+    // fix bug click empty line, the cursor will jump to the end of pre line.
+    if (
+      anchorNode === focusNode &&
+      anchorOffset === focusOffset &&
+      anchorNode.textContent === '\n' &&
+      focusOffset === 0
+    ) {
+      focusOffset = anchorOffset = 1
     }
+
+    const anchorParagraph = findNearestParagraph(anchorNode)
+    const focusParagraph = findNearestParagraph(focusNode)
+    let aOffset = getOffsetOfParagraph(anchorNode, anchorParagraph) + anchorOffset
+    let fOffset = getOffsetOfParagraph(focusNode, focusParagraph) + focusOffset
+    // fix input after image.
+    if (
+      anchorNode === focusNode &&
+      anchorOffset === focusOffset &&
+      anchorNode.parentNode.classList.contains('ag-image-container') &&
+      anchorNode.previousElementSibling &&
+      anchorNode.previousElementSibling.nodeName === 'IMG'
+    ) {
+      const imageWrapper = anchorNode.parentNode.parentNode
+      const preElement = imageWrapper.previousElementSibling
+      aOffset = 0
+      if (preElement) {
+        aOffset += getOffsetOfParagraph(preElement, anchorParagraph)
+        aOffset += getTextContent(preElement, [ CLASS_OR_ID['AG_MATH_RENDER'], CLASS_OR_ID['AG_RUBY_RENDER'] ]).length
+      }
+      aOffset += getTextContent(imageWrapper, [ CLASS_OR_ID['AG_MATH_RENDER'], CLASS_OR_ID['AG_RUBY_RENDER'] ]).length
+      fOffset = aOffset
+    }
+
+    if (
+      anchorNode === focusNode &&
+      anchorNode.nodeType === 1 &&
+      anchorNode.classList.contains('ag-image-container')
+    ) {
+      const imageWrapper = anchorNode.parentNode
+      const preElement = imageWrapper.previousElementSibling
+      aOffset = 0
+      if (preElement) {
+        aOffset += getOffsetOfParagraph(preElement, anchorParagraph)
+        aOffset += getTextContent(preElement, [ CLASS_OR_ID['AG_MATH_RENDER'], CLASS_OR_ID['AG_RUBY_RENDER'] ]).length
+      }
+      if (anchorOffset === 3) {
+        aOffset += getTextContent(imageWrapper, [ CLASS_OR_ID['AG_MATH_RENDER'], CLASS_OR_ID['AG_RUBY_RENDER'] ]).length
+      }
+      fOffset = aOffset
+    }
+
+    const anchor = { key: anchorParagraph.id, offset: aOffset }
+    const focus = { key: focusParagraph.id, offset: fOffset }
+    const result = new Cursor({ anchor, focus })
+
+    if (needFix) {
+      this.setCursorRange(result)
+    }
+
+    return result
   }
 
   // topOffset is the line counts above cursor, and bottomOffset is line counts bellow cursor.

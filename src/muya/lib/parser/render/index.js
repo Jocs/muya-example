@@ -1,9 +1,9 @@
 import mermaid from 'mermaid'
 import flowchart from 'flowchart.js'
 import Diagram from './sequence'
-// import vegaEmbed from 'vega-embed'
+import vegaEmbed from 'vega-embed'
 import { CLASS_OR_ID } from '../../config'
-import { conflict, mixins } from '../../utils'
+import { conflict, mixins, camelToSnake } from '../../utils'
 import { patch, toVNode, toHTML, h } from './snabbdom'
 import { beginRules } from '../rules'
 import renderInlines from './renderInlines'
@@ -13,12 +13,14 @@ class StateRender {
   constructor (muya) {
     this.muya = muya
     this.eventCenter = muya.eventCenter
+    this.codeCache = new Map()
     this.loadImageMap = new Map()
     this.loadMathMap = new Map()
     this.mermaidCache = new Set()
     this.diagramCache = new Map()
     this.tokenCache = new Map()
     this.labels = new Map()
+    this.urlMap = new Map()
     this.container = null
   }
 
@@ -26,6 +28,7 @@ class StateRender {
     this.container = container
   }
 
+  // collect link reference definition
   collectLabels (blocks) {
     this.labels.clear()
 
@@ -75,7 +78,8 @@ class StateRender {
     return active ? CLASS_OR_ID['AG_HIGHLIGHT'] : CLASS_OR_ID['AG_SELECTION']
   }
 
-  getSelector (block, cursor, activeBlocks) {
+  getSelector (block, activeBlocks) {
+    const { cursor, selectedBlock } = this.muya.contentState
     const type = block.type === 'hr' ? 'p' : block.type
     const isActive = activeBlocks.some(b => b.key === block.key) || block.key === cursor.start.key
 
@@ -84,14 +88,20 @@ class StateRender {
       selector += `.${CLASS_OR_ID['AG_ACTIVE']}`
     }
     if (type === 'span') {
-      selector += `.${CLASS_OR_ID['AG_LINE']}`
+      selector += `.ag-${camelToSnake(block.functionType)}`
+    }
+    if (!block.parent && selectedBlock && block.key === selectedBlock.key) {
+      selector += `.${CLASS_OR_ID['AG_SELECTED']}`
     }
     return selector
   }
 
   renderMermaid () {
     if (this.mermaidCache.size) {
-      mermaid.init(undefined, document.querySelectorAll([...this.mermaidCache].join(', ')))
+      mermaid.initialize({
+        theme: this.muya.options.mermaidTheme
+      })
+      mermaid.init(undefined, document.querySelectorAll(Array.from(this.mermaidCache).join(', ')))
       this.mermaidCache.clear()
     }
   }
@@ -100,8 +110,8 @@ class StateRender {
     const cache = this.diagramCache
     const RENDER_MAP = {
       'flowchart': flowchart,
-      'sequence': Diagram// ,
-      // 'vega-lite': vegaEmbed
+      'sequence': Diagram,
+      'vega-lite': vegaEmbed
     }
     if (cache.size) {
       for (const [key, value] of cache.entries()) {
@@ -112,7 +122,10 @@ class StateRender {
         if (functionType === 'sequence') {
           Object.assign(options, { theme: this.muya.options.sequenceTheme })
         } else if (functionType === 'vega-lite') {
-          Object.assign(options, { actions: false, tooltip: false, renderer: 'svg' })
+          Object.assign(options, {
+            actions: false, tooltip: false, renderer: 'svg',
+            theme: this.muya.options.vegaTheme
+          })
         }
         try {
           if (functionType === 'flowchart' || functionType === 'sequence') {
@@ -131,11 +144,10 @@ class StateRender {
     }
   }
 
-  render (blocks, cursor, activeBlocks, matches) {
+  render (blocks, activeBlocks, matches) {
     const selector = `div#${CLASS_OR_ID['AG_EDITOR_ID']}`
-
     const children = blocks.map(block => {
-      return this.renderBlock(block, cursor, activeBlocks, matches, true)
+      return this.renderBlock(block, activeBlocks, matches, true)
     })
 
     const newVdom = h(selector, children)
@@ -145,14 +157,15 @@ class StateRender {
     patch(oldVdom, newVdom)
     this.renderMermaid()
     this.renderDiagram()
+    this.codeCache.clear()
   }
 
   // Only render the blocks which you updated
-  partialRender (blocks, cursor, activeBlocks, matches, startKey, endKey) {
+  partialRender (blocks, activeBlocks, matches, startKey, endKey) {
     const cursorOutMostBlock = activeBlocks[activeBlocks.length - 1]
     // If cursor is not in render blocks, need to render cursor block independently
     const needRenderCursorBlock = blocks.indexOf(cursorOutMostBlock) === -1
-    const newVnode = h('section', blocks.map(block => this.renderBlock(block, cursor, activeBlocks, matches)))
+    const newVnode = h('section', blocks.map(block => this.renderBlock(block, activeBlocks, matches)))
     const html = toHTML(newVnode).replace(/^<section>([\s\S]+?)<\/section>$/, '$1')
 
     const needToRemoved = []
@@ -181,12 +194,32 @@ class StateRender {
       const cursorDom = document.querySelector(`#${key}`)
       if (cursorDom) {
         const oldCursorVnode = toVNode(cursorDom)
-        const newCursorVnode = this.renderBlock(cursorOutMostBlock, cursor, activeBlocks, matches)
+        const newCursorVnode = this.renderBlock(cursorOutMostBlock, activeBlocks, matches)
         patch(oldCursorVnode, newCursorVnode)
       }
     }
+
     this.renderMermaid()
     this.renderDiagram()
+    this.codeCache.clear()
+  }
+
+  /**
+   * Only render one block.
+   * 
+   * @param {object} block 
+   * @param {array} activeBlocks 
+   * @param {array} matches 
+   */
+  singleRender (block, activeBlocks, matches) {
+    const selector = `#${block.key}`
+    const newVdom = this.renderBlock(block, activeBlocks, matches, true)
+    const rootDom = document.querySelector(selector)
+    const oldVdom = toVNode(rootDom)
+    patch(oldVdom, newVdom)
+    this.renderMermaid()
+    this.renderDiagram()
+    this.codeCache.clear()
   }
 }
 

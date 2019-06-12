@@ -1,7 +1,6 @@
 // DOTO: Don't use Node API in editor folder, remove `path` @jocs
-// todo@jocs: remove the use of `axios` in muya
-import axios from 'axios'
 import createDOMPurify from 'dompurify'
+import { isInElectron, URL_REG } from '../config'
 
 const ID_PREFIX = 'ag-'
 let id = 0
@@ -22,6 +21,8 @@ export const isEven = number => Math.abs(number) % 2 === 0
 export const isLengthEven = (str = '') => str.length % 2 === 0
 
 export const snakeToCamel = name => name.replace(/_([a-z])/g, (p0, p1) => p1.toUpperCase())
+
+export const camelToSnake = name => name.replace(/([A-Z])/g, (_, p) => `-${p.toLowerCase()}`)
 /**
  *  Are two arrays have intersection
  */
@@ -132,7 +133,7 @@ export const deepCopy = object => {
   return obj
 }
 
-export const loadImage = async (url, detectContentType) => {
+export const loadImage = async (url, detectContentType = false) => {
   if (detectContentType) {
     const isImage = await checkImageContentType(url)
     if (!isImage) throw new Error('not an image')
@@ -149,56 +150,91 @@ export const loadImage = async (url, detectContentType) => {
   })
 }
 
-export const checkImageContentType = async url => {
-  try {
-    const res = await axios.head(url)
-    const contentType = res.headers['content-type']
-    if (res.status === 200 && /^image\/(?:jpeg|png|gif|svg\+xml|webp)$/.test(contentType)) {
-      return true
+export const checkImageContentType = url => {
+  const req = new XMLHttpRequest()
+  let settle
+  const promise = new Promise((resolve, reject) => {
+    settle = resolve
+  })
+  const handler = () => {
+    if (req.readyState === XMLHttpRequest.DONE) {
+      if (req.status === 200) {
+        const contentType = req.getResponseHeader('Content-Type')
+        if (/^image\/(?:jpeg|png|gif|svg\+xml|webp)$/.test(contentType)) {
+          settle(true)
+        } else {
+          settle(false)
+        }
+      } else {
+        settle(false)
+      }
     }
-    return false
-  } catch (err) {
-    return false
   }
+  const handleError = () => {
+    settle(false)
+  }
+  req.open('HEAD', url)
+  req.onreadystatechange = handler
+  req.onerror = handleError
+  req.send()
+
+  return promise
 }
 
-export const getImageInfo = src => {
+/**
+ * Return image information and correct the relative image path if needed.
+ *
+ * @param {string} src Image url
+ * @param {string} baseUrl Base path; used on desktop to fix the relative image path.
+ */
+export const getImageInfo = (src, baseUrl = window.DIRNAME) => {
   const EXT_REG = /\.(jpeg|jpg|png|gif|svg|webp)(?=\?|$)/i
-  // http[s] (domain or IPv4 or localhost or IPv6) [port] /not-white-space
-  const URL_REG = /^http(s)?:\/\/([a-z0-9\-._~]+\.[a-z]{2,}|[0-9.]+|localhost|\[[a-f0-9.:]+\])(:[0-9]{1,5})?\/[\S]+/i
+  // data:[<MIME-type>][;charset=<encoding>][;base64],<data>
   const DATA_URL_REG = /^data:image\/[\w+-]+(;[\w-]+=[\w-]+|;base64)*,[a-zA-Z0-9+/]+={0,2}$/
+
   const imageExtension = EXT_REG.test(src)
   const isUrl = URL_REG.test(src)
+
+  // Treat an URL with valid extension as image
   if (imageExtension) {
-    if (isUrl || !window.DIRNAME) {
+    const isAbsoluteLocal = /^(?:\/|\\\\|[a-zA-Z]:\\).+/.test(src)
+    if (isUrl || (!isAbsoluteLocal && !baseUrl)) {
+      if (!isUrl && !baseUrl && isInElectron) {
+        console.warn('"baseUrl" is not defined!')
+      }
+
       return {
         isUnknownType: false,
         src
       }
-    } else if (window && window.process && window.process.type === 'renderer') {
+    } else if (isInElectron) {
+      // Correct relative path on desktop. If we resolve a absolute path "path.resolve" doesn't do anything.
       return {
         isUnknownType: false,
-        src: 'file://' + require('path').resolve(window.DIRNAME, src)
+        src: 'file://' + require('path').resolve(baseUrl, src)
       }
     }
+    // else: Forbid the request due absolute or relative path in browser
   } else if (isUrl && !imageExtension) {
+    // Assume it's a valid image and make a http request later
     return {
       isUnknownType: true,
       src
     }
-  } else {
-    const isDataUrl = DATA_URL_REG.test(src)
-    if (isDataUrl) {
-      return {
-        isUnknownType: false,
-        src
-      }
-    } else {
-      return {
-        isUnknownType: false,
-        src: ''
-      }
+  }
+
+  // Data url
+  if (DATA_URL_REG.test(src)) {
+    return {
+      isUnknownType: false,
+      src
     }
+  }
+
+  // Url type is unknown
+  return {
+    isUnknownType: false,
+    src: ''
   }
 }
 
@@ -281,4 +317,10 @@ export const getParagraphReference = (ele, id) => {
     clientHeight: height,
     id
   }
+}
+
+export const verticalPositionInRect = (event, rect) => {
+  const { clientY } = event
+  const { top, height } = rect
+  return (clientY - top) > (height / 2) ? 'down' : 'up'
 }

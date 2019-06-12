@@ -7,12 +7,15 @@
 <script>
   import Muya from './muya/lib'
   import TablePicker from './muya/lib/ui/tablePicker'
-  // import QuickInsert from './muya/lib/ui/quickInsert'
+  import QuickInsert from './muya/lib/ui/quickInsert'
   import CodePicker from './muya/lib/ui/codePicker'
   import EmojiPicker from './muya/lib/ui/emojiPicker'
   import ImagePathPicker from './muya/lib/ui/imagePicker'
+  import ImageSelector from './muya/lib/ui/imageSelector'
   import FormatPicker from './muya/lib/ui/formatPicker'
-  import './muya/themes/light.css'
+  import FrontMenu from './muya/lib/ui/frontMenu'
+  import './muya/themes/default.css'
+  import './assets/index.css'
 
   export default {
     name: 'app',
@@ -21,12 +24,20 @@
         const ele = this.$refs.editor
 
         Muya.use(TablePicker)
-        // Muya.use(QuickInsert)
+        Muya.use(QuickInsert)
         Muya.use(CodePicker)
         Muya.use(EmojiPicker)
         Muya.use(ImagePathPicker)
+        Muya.use(ImageSelector)
         Muya.use(FormatPicker)
-        const { container } = this.editor = new Muya(ele, {})
+        Muya.use(FrontMenu)
+
+        this.editor = new Muya(ele, {
+          markdown: 'Welcome to use muya...'
+        })
+        this.editor.on('change', changes => {
+          // console.log(changes)
+        })
       })
     }
   }

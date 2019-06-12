@@ -6,7 +6,7 @@ import voidHtmlTags from 'html-tags/void'
 // Electron 2.0.2 not support yet! So give a default value 4
 export const DEVICE_MEMORY = navigator.deviceMemory || 4 // Get the divice memory number(Chrome >= 63)
 export const UNDO_DEPTH = DEVICE_MEMORY >= 4 ? 100 : 50
-export const HAS_TEXT_BLOCK_REG = /^(h\d|span|th|td|hr)/i
+export const HAS_TEXT_BLOCK_REG = /^(span|th|td)/i
 export const VOID_HTML_TAGS = voidHtmlTags
 export const HTML_TAGS = htmlTags
 // TYPE1 ~ TYPE7 according to https://github.github.com/gfm/#html-blocks
@@ -47,6 +47,7 @@ export const emptyElementNames = ['br', 'col', 'colgroup', 'hr', 'img', 'input',
 export const EVENT_KEYS = generateKeyHash([
   'Enter',
   'Backspace',
+  'Space',
   'Delete',
   'ArrowUp',
   'ArrowDown',
@@ -61,75 +62,96 @@ export const LOWERCASE_TAGS = generateKeyHash([
 ])
 
 export const CLASS_OR_ID = genUpper2LowerKeyHash([
-  'AG_GRAY',
-  'AG_HIDE',
-  'AG_WARN',
-  'AG_PARAGRAPH', // => 'ag-paragraph'
-  'AG_LINE',
   'AG_ACTIVE',
-  'AG_EDITOR_ID',
-  'AG_EMOJI_MARKED_TEXT',
-  'AG_FENCE_CODE',
-  'AG_INDENT_CODE',
-  'AG_HTML_BLOCK',
-  'AG_HTML_ESCAPE',
-  'AG_FRONT_MATTER',
+  'AG_BACKLASH',
+  'AG_BUG',
+  'AG_BULLET_LIST',
+  'AG_BULLET_LIST_ITEM',
+  'AG_CHECKBOX_CHECKED',
   'AG_CODE_LINE',
   'AG_CODE_LINE_ADD',
   'AG_CODE_LINE_MINUS',
-  'AG_SHOW_PREVIEW',
+  'AG_CONTAINER_BLOCK',
+  'AG_CONTAINER_PREVIEW',
+  'AG_CONTAINER_ICON',
+  'AG_COPY_REMOVE',
+  'AG_EDITOR_ID',
+  'AG_EMOJI_MARKED_TEXT',
+  'AG_EMOJI_MARKER',
+  'AG_EMPTY',
+  'AG_FENCE_CODE',
+  'AG_FLOWCHART',
+  'AG_FOCUS_MODE',
+  'AG_FRONT_MATTER',
+  'AG_FRONT_ICON',
+  'AG_GRAY',
+  'AG_HARD_LINE_BREAK',
+  'AG_HARD_LINE_BREAK_SPACE',
+  'AG_LINE_END',
+  'AG_HEADER_TIGHT_SPACE',
+  'AG_HIDE',
+  'AG_HIGHLIGHT',
+  'AG_HTML_BLOCK',
+  'AG_HTML_ESCAPE',
   'AG_HTML_PREVIEW',
+  'AG_HTML_TAG',
+  'AG_IMAGE_FAIL',
+  'AG_IMAGE_LOADING',
+  'AG_EMPTY_IMAGE',
+  'AG_IMAGE_MARKED_TEXT',
+  'AG_IMAGE_SRC',
+  'AG_IMAGE_CONTAINER',
+  'AG_INLINE_IMAGE',
+  'AG_IMAGE_SUCCESS',
+  'AG_IMAGE_UPLOADING',
+  'AG_INLINE_IMAGE_SELECTED',
+  'AG_INLINE_IMAGE_IS_EDIT',
+  'AG_INDENT_CODE',
+  'AG_INLINE_RULE',
   'AG_LANGUAGE',
   'AG_LANGUAGE_INPUT',
-  'AG_TEMP',
-  'AG_FOCUS_MODE',
+  'AG_LINK',
   'AG_LINK_IN_BRACKET',
-  'AG_BACKLASH',
-  'AG_BUG', // for remove bug
-  'AG_IMAGE_MARKED_TEXT',
-  'AG_IMAGE_FAIL',
-  'AG_IMAGE_SRC',
-  'AG_REMOVE',
-  'AG_COPY_REMOVE',
-  'AG_OUTPUT_REMOVE',
-  'AG_EMOJI_MARKER',
-  'AG_NOTEXT_LINK',
   'AG_LIST_ITEM',
-  'AG_ORDER_LIST',
-  'AG_ORDER_LIST_ITEM',
-  'AG_BULLET_LIST',
-  'AG_BULLET_LIST_ITEM',
-  'AG_TASK_LIST',
-  'AG_TASK_LIST_ITEM',
-  'AG_TASK_LIST_ITEM_CHECKBOX',
-  'AG_CHECKBOX_CHECKED',
-  'AG_TOOL_BAR',
-  'AG_SELECTION',
-  'AG_HIGHLIGHT',
+  'AG_LOOSE_LIST_ITEM',
   'AG_MATH',
   'AG_MATH_TEXT',
   'AG_MATH_RENDER',
-  'AG_MATH_ERROR',
-  'AG_EMPTY',
-  'AG_MATH_MARKER',
-  'AG_CONTAINER_PREVIEW',
-  'AG_FLOWCHART',
-  'AG_SEQUENCE',
-  'AG_MERMAID',
-  'AG_VEGA_LITE',
-  'AG_CONTAINER_BLOCK',
-  'AG_MULTIPLE_MATH',
-  'AG_LOOSE_LIST_ITEM',
-  'AG_TIGHT_LIST_ITEM',
-  'AG_HTML_TAG',
-  'AG_LINK',
-  'AG_HARD_LINE_BREAK',
+  'AG_RUBY',
+  'AG_RUBY_TEXT',
+  'AG_RUBY_RENDER',
+  'AG_SELECTED',
   'AG_SOFT_LINE_BREAK',
-  'AG_INLINE_RULE',
+  'AG_MATH_ERROR',
+  'AG_MATH_MARKER',
+  'AG_MATH_RENDER',
+  'AG_MATH_TEXT',
+  'AG_MERMAID',
+  'AG_MULTIPLE_MATH',
+  'AG_NOTEXT_LINK',
+  'AG_ORDER_LIST',
+  'AG_ORDER_LIST_ITEM',
+  'AG_OUTPUT_REMOVE',
+  'AG_PARAGRAPH',
   'AG_REFERENCE_LABEL',
-  'AG_REFERENCE_TITLE',
+  'AG_REFERENCE_LINK',
   'AG_REFERENCE_MARKER',
-  'AG_REFERENCE_LINK'
+  'AG_REFERENCE_TITLE',
+  'AG_REMOVE',
+  'AG_RUBY',
+  'AG_RUBY_RENDER',
+  'AG_RUBY_TEXT',
+  'AG_SELECTION',
+  'AG_SEQUENCE',
+  'AG_SHOW_PREVIEW',
+  'AG_SOFT_LINE_BREAK',
+  'AG_TASK_LIST',
+  'AG_TASK_LIST_ITEM',
+  'AG_TASK_LIST_ITEM_CHECKBOX',
+  'AG_TIGHT_LIST_ITEM',
+  'AG_TOOL_BAR',
+  'AG_VEGA_LITE',
+  'AG_WARN'
 ])
 
 export const DAED_REMOVE_SELECTOR = new Set([
@@ -144,51 +166,48 @@ export const CURSOR_DNA = getLongUniqueId()
 
 export const DEFAULT_TURNDOWN_CONFIG = {
   headingStyle: 'atx', // setext or atx
+  hr: '---',
   bulletListMarker: '-', // -, +, or *
   codeBlockStyle: 'fenced', // fenced or indented
   fence: '```', // ``` or ~~~
   emDelimiter: '*', // _ or *
-  strongDelimiter: '**' // ** or __
+  strongDelimiter: '**', // ** or __
+  linkStyle: 'inlined',
+  linkReferenceStyle: 'full',
+  blankReplacement (content, node, options) {
+    if (node && node.classList.contains('ag-soft-line-break')) {
+      return LINE_BREAK
+    } else if (node && node.classList.contains('ag-hard-line-break')) {
+      return '  ' + LINE_BREAK
+    } else if (node && node.classList.contains('ag-hard-line-break-sapce')) {
+      return ''
+    } else {
+      return node.isBlock ? '\n\n' : ''
+    }
+  }
 }
 
 export const FORMAT_MARKER_MAP = {
   'em': '*',
   'inline_code': '`',
   'strong': '**',
-  'del': '~~'
+  'del': '~~',
+  'inline_math': '$',
+  'u': {
+    open: '<u>',
+    close: '</u>'
+  },
+  'sub': {
+    open: '<sub>',
+    close: '</sub>'
+  },
+  'sup': {
+    open: '<sup>',
+    close: '</sup>'
+  }
 }
 
-export const FORMAT_TYPES = ['strong', 'em', 'del', 'inline_code', 'link', 'image']
-
-export const punctuation = ['!', '"', '#', '$', '%', '&', "'", '(', ')', '*', '+', ',', '-', '.', '/', ':', ';', '<', '=', '>', '?', '@', '[', '\\', ']', '^', '_', '`', '{', '|', '}', '~']
-
-export const TABLE_TOOLS = [{
-  label: 'table',
-  title: 'Resize Table',
-  icon: 'icon-table'
-}, {
-  label: 'left',
-  title: 'Align Left',
-  icon: 'icon-alignleft'
-}, {
-  label: 'center',
-  title: 'Align Center',
-  icon: 'icon-aligncenter'
-}, {
-  label: 'right',
-  title: 'Align Right',
-  icon: 'icon-alignright'
-}, {
-  label: 'delete',
-  title: 'Delete Table',
-  icon: 'icon-del'
-}]
-
-export const HTML_TOOLS = [{
-  label: 'delete',
-  title: 'Delete HTML',
-  icon: 'icon-del'
-}]
+export const FORMAT_TYPES = ['strong', 'em', 'del', 'inline_code', 'link', 'image', 'inline_math']
 
 export const LINE_BREAK = '\n'
 
@@ -217,16 +236,27 @@ export const EXPORT_DOMPURIFY_CONFIG = {
 
 export const MUYA_DEFAULT_OPTION = {
   focusMode: false,
-  theme: 'light',
   markdown: '',
   preferLooseListItem: true,
   autoPairBracket: true,
   autoPairMarkdownSyntax: true,
   autoPairQuote: true,
   bulletListMarker: '-',
+  orderListDelimiter: '.',
   tabSize: 4,
+  // bullet/list marker width + listIndentation, tab or Daring Fireball Markdown (4 spaces) --> list indentation
+  listIndentation: 1,
   sequenceTheme: 'hand', // hand or simple
-  mermaidTheme: 'forest' // dark or forest
+  mermaidTheme: 'default', // dark / forest / default
+  vegaTheme: 'latimes', // excel / ggplot2 / quartz / vox / fivethirtyeight / dark / latimes
+  hideQuickInsertHint: false,
+  // transform the image to local folder, cloud or just return the local path
+  imageAction: null,
+  // Call Electron open dialog or input element type is file.
+  imagePathPicker: null,
+  clipboardFilePath: () => {},
+  // image path auto completed when you input in image selector.
+  imagePathAutoComplete: () => []
 }
 
 // export const DIAGRAM_TEMPLATE = {
@@ -235,3 +265,8 @@ export const MUYA_DEFAULT_OPTION = {
 
 export const isInElectron = window && window.process && window.process.type === 'renderer'
 export const isOsx = window && window.navigator && /Mac/.test(window.navigator.platform)
+export const isWin = window && window.navigator.userAgent && /win32|wow32|win64|wow64/i.test(window.navigator.userAgent)
+// http[s] (domain or IPv4 or localhost or IPv6) [port] /not-white-space
+export const URL_REG = /^http(s)?:\/\/([a-z0-9\-._~]+\.[a-z]{2,}|[0-9.]+|localhost|\[[a-f0-9.:]+\])(:[0-9]{1,5})?\/[\S]+/i
+// The smallest transparent gif base64 image.
+export const SMALLEST_BASE64 = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'

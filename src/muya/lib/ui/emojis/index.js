@@ -1,12 +1,10 @@
 import { filter } from 'fuzzaldrin'
 import emojis from './emojisJson'
 import { CLASS_OR_ID } from '../../config'
-import selection from '../../selection'
 
 const emojisForSearch = {}
 
 for (const emoji of emojis) {
-  if (emoji.emoji.length > 2) continue
   const newEmoji = Object.assign({}, emoji, { search: [...emoji.aliases, ...emoji.tags].join(' ') })
   if (emojisForSearch[newEmoji.category]) {
     emojisForSearch[newEmoji.category].push(newEmoji)
@@ -29,16 +27,10 @@ export const validEmoji = text => {
  */
 
 export const checkEditEmoji = node => {
-  if (node.classList.contains(CLASS_OR_ID['AG_EMOJI_MARKED_TEXT'])) {
+  if (node && node.classList.contains(CLASS_OR_ID['AG_EMOJI_MARKED_TEXT'])) {
     return node
   }
   return false
-}
-
-export const setInlineEmoji = (node, emoji) => {
-  node.textContent = `${emoji.aliases[0]}`
-  node.setAttribute('data-emoji', emoji.emoji)
-  selection.moveCursor(node.nextElementSibling, 1)
 }
 
 class Emoji {

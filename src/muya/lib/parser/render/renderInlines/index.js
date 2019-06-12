@@ -7,9 +7,9 @@ import htmlTag from './htmlTag'
 import hr from './hr'
 import tailHeader from './tailHeader'
 import hardLineBreak from './hardLineBreak'
+import softLineBreak from './softLineBreak'
 import codeFense from './codeFense'
 import inlineMath from './inlineMath'
-import aLink from './aLink'
 import autoLink from './autoLink'
 import loadImageAsync from './loadImageAsync'
 import htmlImage from './htmlImage'
@@ -24,6 +24,7 @@ import strong from './strong'
 import htmlEscape from './htmlEscape'
 import multipleMath from './multipleMath'
 import referenceDefinition from './referenceDefinition'
+import htmlRuby from './htmlRuby'
 import referenceLink from './referenceLink'
 import referenceImage from './referenceImage'
 
@@ -37,9 +38,9 @@ export default {
   hr,
   tailHeader,
   hardLineBreak,
+  softLineBreak,
   codeFense,
   inlineMath,
-  aLink,
   autoLink,
   loadImageAsync,
   htmlImage,
@@ -54,6 +55,7 @@ export default {
   htmlEscape,
   multipleMath,
   referenceDefinition,
+  htmlRuby,
   referenceLink,
   referenceImage
 }

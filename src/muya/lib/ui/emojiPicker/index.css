@@ -1,22 +1,21 @@
 .ag-emoji-picker {
-  width: 324px;
-  max-height: 307px;
-  padding: 10px 0;
+  width: 348px;
+  max-height: 350px;
   overflow-y: auto;
 }
 
 .ag-emoji-picker .title {
-  color: rgba(55, 53, 47, 0.6);
-  line-height: 120%;
-  font-size: 11px;
-  padding: 10px 14px 12px 14px;
+  color: var(--editorColor80);
+  line-height: 1.15;
+  font-size: 12px;
+  padding: 10px 12px 12px 12px;
   display: flex;
   text-transform: uppercase;
   letter-spacing: 1px;
   font-weight: 600;
   position: sticky;
   top: 0;
-  background: #fff;
+  background: var(--itemBgColor);
   z-index: 1001;
 }
 
@@ -24,18 +23,19 @@
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;
-  padding: 0 15px;
+  padding: 0 12px;
 }
 
 .ag-emoji-picker section .emoji-wrapper .item {
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   cursor: pointer;
   display: flex;
   justify-content: space-around;
   align-items: center;
   box-sizing: border-box;
+  border-radius: 50%;
 }
 
 .ag-emoji-picker:hover .active {
@@ -44,37 +44,18 @@
 }
 
 .ag-emoji-picker .active, .ag-emoji-picker .item:hover {
- background-color: #ecf5ff;
- border: 1px solid var(--activeColor);
+ background-color: var(--floatHoverColor);
 }
 
 .ag-emoji-picker section .emoji-wrapper .item span {
-  width: 42px;
-  height: 42px;
+  width: 24px;
+  height: 24px;
   display: block;
-  font-size: 26px;
+  font-size: 24px;
   text-align: center;
-  line-height: 42px;
+  line-height: 1.15;
+  color: #000;
   transition: transform .2s ease-in;
   transform-origin: center;
 }
-
-.ag-emoji-picker .active span, .ag-emoji-picker .item:hover span {
-  transform: scale(1.1);
- }
-
- .ag-emoji-picker.dark .title {
-  background: var(--primaryColor);
-  color: var(--placeholerColor);
-}
-
-.ag-emoji-picker.dark:hover .active {
-  background: transparent;
-  border-color: transparent;
-}
-
-.ag-emoji-picker.dark .active, .ag-emoji-picker.dark .item:hover {
-  background-color: rgb(72, 71, 66);
-  border: 1px solid var(--primaryColor);
- }
  

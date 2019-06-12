@@ -18,6 +18,10 @@ const getCurrentLevel = type => {
 const paragraphCtrl = ContentState => {
   ContentState.prototype.selectionChange = function (cursor) {
     const { start, end } = cursor || selection.getCursorRange()
+    if (!start || !end) {
+      // TODO: Throw an exception and try to fix this later (GH#848).
+      throw new Error('selectionChange: expected cursor but cursor is null.')
+    }
     const cursorCoords = selection.getCursorCoords()
     const startBlock = this.getBlock(start.key)
     const endBlock = this.getBlock(end.key)
@@ -64,12 +68,19 @@ const paragraphCtrl = ContentState => {
   ContentState.prototype.handleFrontMatter = function () {
     const firstBlock = this.blocks[0]
     if (firstBlock.type === 'pre' && firstBlock.functionType === 'frontmatter') return
-    const frontMatter = this.createBlock('pre')
-    const codeBlock = this.createBlock('code')
-    const emptyLine = this.createBlock('span')
-    frontMatter.lang = codeBlock.lang = emptyLine.lang = 'yaml'
-    emptyLine.functionType = 'codeLine'
-    frontMatter.functionType = 'frontmatter'
+    const lang = 'yaml'
+    const frontMatter = this.createBlock('pre', {
+      functionType: 'frontmatter',
+      lang
+    })
+    const codeBlock = this.createBlock('code', {
+      lang
+    })
+    const emptyLine = this.createBlock('span', {
+      functionType: 'codeLine',
+      lang
+    })
+
     this.appendChild(codeBlock, emptyLine)
     this.appendChild(frontMatter, codeBlock)
     this.insertBefore(frontMatter, firstBlock)
@@ -82,14 +93,14 @@ const paragraphCtrl = ContentState => {
   }
 
   ContentState.prototype.handleListMenu = function (paraType, insertMode) {
-    const { start, end, affiliation } = this.selectionChange()
+    const { start, end, affiliation } = this.selectionChange(this.cursor)
+    const { orderListDelimiter, bulletListMarker, preferLooseListItem } = this.muya.options
     const [blockType, listType] = paraType.split('-')
     const isListed = affiliation.slice(0, 3).filter(b => /ul|ol/.test(b.type))
-    const { preferLooseListItem } = this
 
     if (isListed.length && !insertMode) {
       const listBlock = isListed[0]
-      if (listType === isListed[0].listType) {
+      if (listType === listBlock.listType) {
         const listItems = listBlock.children
         listItems.forEach(listItem => {
           listItem.children.forEach(itemParagraph => {
@@ -109,13 +120,23 @@ const paragraphCtrl = ContentState => {
           inputBlock && this.removeBlock(inputBlock)
         })
       }
+      const oldListType = listBlock.listType
       listBlock.type = blockType
       listBlock.listType = listType
       listBlock.children.forEach(b => (b.listItemType = listType))
 
       if (listType === 'order') {
         listBlock.start = listBlock.start || 1
+        listBlock.children.forEach(b => (b.bulletMarkerOrDelimiter = orderListDelimiter))
       }
+      if (
+        (listType === 'bullet' && oldListType === 'order') ||
+        (listType === 'task' && oldListType === 'order')
+      ) {
+        delete listBlock.start
+        listBlock.children.forEach(b => (b.bulletMarkerOrDelimiter = bulletListMarker))
+      }
+
       // if the new block is task list, add checkbox
       if (listType === 'task') {
         const listItems = listBlock.children
@@ -128,16 +149,17 @@ const paragraphCtrl = ContentState => {
     } else {
       if (start.key === end.key || (start.block.parent && start.block.parent === end.block.parent)) {
         const block = this.getBlock(start.key)
+        const paragraph = this.getBlock(block.parent)
         if (listType === 'task') {
           // 1. first update the block to bullet list
-          const listItemParagraph = this.updateList(block, 'bullet')
+          const listItemParagraph = this.updateList(paragraph, 'bullet', undefined, block)
           // 2. second update bullet list to task list
           setTimeout(() => {
             this.updateTaskListItem(listItemParagraph, listType)
             this.partialRender()
           })
         } else {
-          this.updateList(block, listType)
+          this.updateList(paragraph, listType, undefined, block)
         }
       } else {
         const { parent, startIndex, endIndex } = this.getCommonParent()
@@ -170,7 +192,7 @@ const paragraphCtrl = ContentState => {
   }
 
   ContentState.prototype.handleLooseListItem = function () {
-    const { affiliation } = this.selectionChange()
+    const { affiliation } = this.selectionChange(this.cursor)
     let listContainer = []
     if (affiliation.length >= 1 && /ul|ol/.test(affiliation[0].type)) {
       listContainer = affiliation[0].children
@@ -186,78 +208,128 @@ const paragraphCtrl = ContentState => {
   }
 
   ContentState.prototype.handleCodeBlockMenu = function () {
-    const { start, end, affiliation } = this.selectionChange()
+    const { start, end, affiliation } = this.selectionChange(this.cursor)
     let startBlock = this.getBlock(start.key)
     const endBlock = this.getBlock(end.key)
     const startParents = this.getParents(startBlock)
     const endParents = this.getParents(endBlock)
     const hasFencedCodeBlockParent = () => {
-      return startParents.some(b => b.type === 'pre' && /code/.test(b.functionType)) ||
-        endParents.some(b => b.type === 'pre' && /code/.test(b.functionType))
+      return [...startParents, ...endParents].some(b => b.type === 'pre' && /code/.test(b.functionType))
     }
     // change fenced code block to p paragraph
     if (affiliation.length && affiliation[0].type === 'pre' && /code/.test(affiliation[0].functionType)) {
       const preBlock = affiliation[0]
       const codeLines = preBlock.children[1].children
-      this.codeBlocks.delete(preBlock.key)
       preBlock.type = 'p'
       preBlock.children = []
 
+      const newParagraphBlock = this.createBlockP(codeLines.map(l => l.text).join('\n'))
+      this.insertBefore(newParagraphBlock, preBlock)
+
+      this.removeBlock(preBlock)
+      const { start, end } = this.cursor
+
+      const key = newParagraphBlock.children[0].key
+      let startOffset = 0
+      let endOffset = 0
+      let startStop = false
+      let endStop = false
       for (const line of codeLines) {
-        delete line.lang
-        delete line.functionType
-        this.appendChild(preBlock, line)
+        if (line.key !== start.key && !startStop) {
+          startOffset += line.text.length + 1
+        } else {
+          startOffset += start.offset
+          startStop = true
+        }
+        if (line.key !== end.key && !endStop) {
+          endOffset += line.text.length + 1
+        } else {
+          endOffset += end.offset
+          endStop = true
+        }
       }
 
-      delete preBlock.lang
-      delete preBlock.functionType
       this.cursor = {
-        start: this.cursor.start,
-        end: this.cursor.end
+        start: { key, offset: startOffset },
+        end: { key, offset: endOffset }
       }
     } else {
       if (start.key === end.key) {
         if (startBlock.type === 'span') {
-          startBlock = this.getParent(startBlock)
-          startBlock.type = 'pre'
-          const codeBlock = this.createBlock('code')
-          const inputBlock = this.createBlock('span', '')
-          inputBlock.functionType = 'languageInput'
-          startBlock.functionType = 'fencecode'
-          startBlock.lang = codeBlock.lang = ''
-          const codeLines = startBlock.children
-          startBlock.children = []
-          codeLines.forEach(line => {
-            line.functionType = 'codeLine'
-            line.lang = ''
-            this.appendChild(codeBlock, line)
+          const anchorBlock = this.getParent(startBlock)
+          const lang = ''
+          const preBlock = this.createBlock('pre', {
+            functionType: 'fencecode',
+            lang
           })
-          this.appendChild(startBlock, inputBlock)
-          this.appendChild(startBlock, codeBlock)
-        }
 
-        this.cursor = {
-          start: this.cursor.start,
-          end: this.cursor.end
+          const codeBlock = this.createBlock('code', {
+            lang: ''
+          })
+
+          const inputBlock = this.createBlock('span', {
+            functionType: 'languageInput'
+          })
+
+          const codes = startBlock.text.split('\n')
+
+          for (const code of codes) {
+            const codeLine = this.createBlock('span', {
+              text: code,
+              functionType: 'codeLine',
+              lang
+            })
+            this.appendChild(codeBlock, codeLine)
+          }
+
+          this.appendChild(preBlock, inputBlock)
+          this.appendChild(preBlock, codeBlock)
+          this.insertBefore(preBlock, anchorBlock)
+
+          this.removeBlock(anchorBlock)
+
+          const { key } = inputBlock
+          const offset = 0
+
+          this.cursor = {
+            start: { key, offset },
+            end: { key, offset }
+          }
+        } else {
+          this.cursor = {
+            start: this.cursor.start,
+            end: this.cursor.end
+          }
         }
       } else if (!hasFencedCodeBlockParent()) {
         const { parent, startIndex, endIndex } = this.getCommonParent()
         const children = parent ? parent.children : this.blocks
         const referBlock = children[endIndex]
-        const preBlock = this.createBlock('pre')
-        const codeBlock = this.createBlock('code')
-        preBlock.functionType = 'fencecode'
-        preBlock.lang = codeBlock.lang = ''
-        const markdown = new ExportMarkdown(children.slice(startIndex, endIndex + 1)).generate()
+        const lang = ''
+        const preBlock = this.createBlock('pre', {
+          functionType: 'fencecode',
+          lang
+        })
+        const codeBlock = this.createBlock('code', {
+          lang
+        })
+
+        const listIndentation = this.listIndentation
+        const markdown = new ExportMarkdown(children.slice(startIndex, endIndex + 1), listIndentation).generate()
 
         markdown.split(LINE_BREAKS_REG).forEach(text => {
-          const codeLine = this.createBlock('span', text)
-          codeLine.lang = ''
-          codeLine.functionType = 'codeLine'
+          const codeLine = this.createBlock('span', {
+            text,
+            lang,
+            functionType: 'codeLine'
+          })
+ 
           this.appendChild(codeBlock, codeLine)
         })
-        const inputBlock = this.createBlock('span', '')
-        inputBlock.functionType = 'languageInput'
+        const inputBlock = this.createBlock('span', {
+          functionType: 'languageInput'
+        })
+
         this.appendChild(preBlock, inputBlock)
         this.appendChild(preBlock, codeBlock)
         this.insertAfter(preBlock, referBlock)
@@ -268,7 +340,7 @@ const paragraphCtrl = ContentState => {
           removeCache.push(child)
         }
         removeCache.forEach(b => this.removeBlock(b))
-        const key = codeBlock.children[0].key
+        const key = inputBlock.key
         const offset = 0
         this.cursor = {
           start: { key, offset },
@@ -279,7 +351,7 @@ const paragraphCtrl = ContentState => {
   }
 
   ContentState.prototype.handleQuoteMenu = function (insertMode) {
-    const { start, end, affiliation } = this.selectionChange()
+    const { start, end, affiliation } = this.selectionChange(this.cursor)
     let startBlock = this.getBlock(start.key)
     const isBlockQuote = affiliation.slice(0, 2).filter(b => /blockquote/.test(b.type))
     // change blockquote to paragraph
@@ -319,19 +391,19 @@ const paragraphCtrl = ContentState => {
     }
   }
 
-  ContentState.prototype.insertContainerBlock = function (functionType, value = '') {
-    const { start, end } = selection.getCursorRange()
-    if (start.key !== end.key) return
-    let block = this.getBlock(start.key)
+  ContentState.prototype.insertContainerBlock = function (functionType, block) {
     if (block.type === 'span') {
       block = this.getParent(block)
     }
-    const mathBlock = this.createContainerBlock(functionType, value)
-    this.insertAfter(mathBlock, block)
-    if (block.type === 'p' && block.children.length === 1 && !block.children[0].text) {
-      this.removeBlock(block)
-    }
-    const cursorBlock = mathBlock.children[0].children[0].children[0]
+    const value = block.type === 'p'
+      ? block.children.map(child => child.text).join('\n').trim()
+      : block.text
+
+    const containerBlock = this.createContainerBlock(functionType, value)
+    this.insertAfter(containerBlock, block)
+    this.removeBlock(block)
+
+    const cursorBlock = containerBlock.children[0].children[0].children[0]
     const { key } = cursorBlock
     const offset = 0
     this.cursor = {
@@ -351,10 +423,14 @@ const paragraphCtrl = ContentState => {
   }
 
   ContentState.prototype.insertHtmlBlock = function (block) {
-    const parentBlock = this.getParent(block)
-    block.text = '<div>'
-    const preBlock = this.initHtmlBlock(parentBlock, 'div')
-    const key = preBlock.children[0].children[1].key
+    if (block.type === 'span') {
+      block = this.getParent(block)
+    }
+    const preBlock = this.initHtmlBlock(block)
+    const key = preBlock.children[0].children[1]
+      ? preBlock.children[0].children[1].key
+      : preBlock.children[0].children[0].key
+
     const offset = 0
     this.cursor = {
       start: { key, offset },
@@ -365,7 +441,7 @@ const paragraphCtrl = ContentState => {
   ContentState.prototype.updateParagraph = function (paraType, insertMode = false) {
     const { start, end } = this.cursor
     const block = this.getBlock(start.key)
-    const { type, text } = block
+    const { text } = block
 
     switch (paraType) {
       case 'front-matter': {
@@ -391,7 +467,7 @@ const paragraphCtrl = ContentState => {
         break
       }
       case 'mathblock': {
-        this.insertContainerBlock('multiplemath')
+        this.insertContainerBlock('multiplemath', block)
         break
       }
       case 'table': {
@@ -406,7 +482,7 @@ const paragraphCtrl = ContentState => {
       case 'sequence':
       case 'mermaid':
       case 'vega-lite':
-        this.insertContainerBlock(paraType)
+        this.insertContainerBlock(paraType, block)
         break
       case 'heading 1':
       case 'heading 2':
@@ -418,15 +494,19 @@ const paragraphCtrl = ContentState => {
       case 'degrade heading':
       case 'paragraph': {
         if (start.key !== end.key) return
-        const [, hash, partText] = /(^#*)(.*)/.exec(text)
+        const headingStyle = DEFAULT_TURNDOWN_CONFIG.headingStyle
+        const parent = this.getParent(block)
+        // \u00A0 is &nbsp;
+        const [, hash, partText] = /(^ {0,3}#*[ \u00A0]*)([\s\S]*)/.exec(text)
         let newLevel = 0 // 1, 2, 3, 4, 5, 6
         let newType = 'p'
         let key
+
         if (/\d/.test(paraType)) {
           newLevel = Number(paraType.split(/\s/)[1])
           newType = `h${newLevel}`
         } else if (paraType === 'upgrade heading' || paraType === 'degrade heading') {
-          const currentLevel = getCurrentLevel(type)
+          const currentLevel = getCurrentLevel(parent.type)
           newLevel = currentLevel
           if (paraType === 'upgrade heading' && currentLevel !== 1) {
             if (currentLevel === 0) newLevel = 6
@@ -438,49 +518,45 @@ const paragraphCtrl = ContentState => {
           newType = newLevel === 0 ? 'p' : `h${newLevel}`
         }
 
-        const startOffset = start.offset + newLevel - hash.length + 1
-        const endOffset = end.offset + newLevel - hash.length + 1
-        const newText = '#'.repeat(newLevel) + `${String.fromCharCode(160)}${partText}` // &nbsp; code: 160
+        const startOffset = newLevel > 0
+          ? start.offset + newLevel - hash.length + 1
+          : start.offset - hash.length // no need to add `1`, because we didn't add `String.fromCharCode(160)` to text paragraph
+        const endOffset = newLevel > 0
+          ? end.offset + newLevel - hash.length + 1
+          : end.offset - hash.length
+        const newText = newLevel > 0
+          ? '#'.repeat(newLevel) + `${String.fromCharCode(160)}${partText}` // &nbsp; code: 160
+          : partText
 
-        if (block.type === 'span' && newType !== 'p') {
-          const header = this.createBlock(newType, newText)
-          header.headingStyle = DEFAULT_TURNDOWN_CONFIG.headingStyle
-          key = header.key
-          const parent = this.getParent(block)
-          if (this.isOnlyChild(block)) {
-            this.insertBefore(header, parent)
-            this.removeBlock(parent)
-          } else if (this.isFirstChild(block)) {
-            this.insertBefore(header, parent)
-            this.removeBlock(block)
-          } else if (this.isLastChild(block)) {
-            this.insertAfter(header, parent)
-            this.removeBlock(block)
-          } else {
-            const pBlock = this.createBlock('p')
-            let nextSibling = this.getNextSibling(block)
-            while (nextSibling) {
-              this.appendChild(pBlock, nextSibling)
-              const oldNextSibling = nextSibling
-              nextSibling = this.getNextSibling(nextSibling)
-              this.removeBlock(oldNextSibling)
-            }
-            this.removeBlock(block)
-            this.insertAfter(header, parent)
-            this.insertAfter(pBlock, header)
-          }
-        } else if (/^h/.test(block.type) && newType === 'p') {
+        // No change
+        if (newType === 'p' && parent.type === newType) {
+          return
+        }
+        // No change
+        if (newType !== 'p' && parent.type === newType && parent.headingStyle === headingStyle) {
+          return
+        }
+
+        if (newType !== 'p') {
+          const header = this.createBlock(newType, {
+            headingStyle
+          })
+          const headerContent = this.createBlock('span', {
+            text: headingStyle === 'atx'? newText.replace(/\n/g, ' ') : newText,
+            functionType: headingStyle === 'atx'? 'atxLine' : 'paragraphContent'
+          })
+          this.appendChild(header, headerContent)
+          key = headerContent.key
+          
+          this.insertBefore(header, parent)
+          this.removeBlock(parent)
+        } else {
           const pBlock = this.createBlockP(newText)
           key = pBlock.children[0].key
-          this.insertAfter(pBlock, block)
-          this.removeBlock(block)
-        } else {
-          const newHeader = this.createBlock(newType, newText)
-          newHeader.headingStyle = DEFAULT_TURNDOWN_CONFIG.headingStyle
-          key = newHeader.key
-          this.insertAfter(newHeader, block)
-          this.removeBlock(block)
+          this.insertAfter(pBlock, parent)
+          this.removeBlock(parent)
         }
+
         this.cursor = {
           start: { key, offset: startOffset },
           end: { key, offset: endOffset }
@@ -491,7 +567,11 @@ const paragraphCtrl = ContentState => {
         const pBlock = this.createBlockP()
         const archor = block.type === 'span' ? this.getParent(block) : block
         const hrBlock = this.createBlock('hr')
-        hrBlock.text = '---'
+        const thematicContent = this.createBlock('span', {
+          functionType: 'thematicBreakLine',
+          text: '---'
+        })
+        this.appendChild(hrBlock, thematicContent)
         this.insertAfter(hrBlock, archor)
         this.insertAfter(pBlock, hrBlock)
         if (!text) {
@@ -516,48 +596,33 @@ const paragraphCtrl = ContentState => {
       this.partialRender()
     }
     // update menu status
-    const selectionChanges = this.selectionChange()
+    const selectionChanges = this.selectionChange(this.cursor)
     this.muya.eventCenter.dispatch('selectionChange', selectionChanges)
+    // emit change event
+    this.muya.eventCenter.dispatch('stateChange')
   }
 
-  ContentState.prototype.insertParagraph = function (location, text = '') {
+  ContentState.prototype.insertParagraph = function (location, text = '', outMost = false) {
     const { start, end } = this.cursor
     // if cursor is not in one line or paragraph, can not insert paragraph
     if (start.key !== end.key) return
-    let block = this.getBlock(start.key)
-    if (block.type === 'span' && !block.functionType) {
-      block = this.getParent(block)
-    } else if (block.type === 'span' && block.functionType === 'codeLine') {
-      const preBlock = this.getParent(this.getParent(block))
-      switch (preBlock.functionType) {
-        case 'fencecode':
-        case 'indentcode':
-        case 'frontmatter': {
-          // You can not insert paragraph before frontmatter
-          if (preBlock.functionType === 'frontmatter' && location === 'before') {
-            return
-          }
-          block = preBlock
-          break
-        }
-        case 'html': {
-          block = this.getParent(this.getParent(preBlock))
-          break
-        }
-        case 'multiplemath': {
-          block = this.getParent(preBlock)
-          break
-        }
-      }
-    } else if (/th|td/.test(block.type)) {
-      // get figure block from table cell
-      block = this.getParent(this.getParent(this.getParent(this.getParent(block))))
+    const block = this.getBlock(start.key)
+    let anchor = null
+    if (outMost) {
+      anchor = this.findOutMostBlock(block)
+    } else {
+      anchor = this.getAnchor(block)
     }
+    // You can not insert paragraph before frontmatter
+    if (!anchor || anchor && anchor.functionType === 'frontmatter' && location === 'before') {
+      return
+    }
+
     const newBlock = this.createBlockP(text)
     if (location === 'before') {
-      this.insertBefore(newBlock, block)
+      this.insertBefore(newBlock, anchor)
     } else {
-      this.insertAfter(newBlock, block)
+      this.insertAfter(newBlock, anchor)
     }
     const { key } = newBlock.children[0]
     const offset = text.length
@@ -566,6 +631,143 @@ const paragraphCtrl = ContentState => {
       end: { key, offset }
     }
     this.partialRender()
+    this.muya.eventCenter.dispatch('stateChange')
+  }
+
+  ContentState.prototype.getPreBlock = function (block) {
+    const { children } = block
+    if (!children || !children.length) return null
+    for (const child of children) {
+      if (child.type === 'pre') {
+        return child
+      } else {
+        return this.getPreBlock(child)
+      }
+    }
+    return null
+  }
+
+  // make a dulication of the current block
+  ContentState.prototype.duplicate = function () {
+    const { start, end } = this.cursor
+    const startOutmostBlock = this.findOutMostBlock(this.getBlock(start.key))
+    const endOutmostBlock = this.findOutMostBlock(this.getBlock(end.key))
+    if (startOutmostBlock !== endOutmostBlock) {
+      // if the cursor is not in one paragraph, just return
+      return
+    }
+    // if copied block has pre block: html, multiplemath, vega-light, mermaid, flowchart, sequence...
+    const copiedBlock = this.copyBlock(startOutmostBlock)
+    this.insertAfter(copiedBlock, startOutmostBlock)
+
+    const cursorBlock = this.firstInDescendant(copiedBlock)
+    // set cursor at the end of the first descendant of the duplicated block.
+    const { key, text } = cursorBlock
+    const offset = text.length
+    this.cursor = {
+      start: { key, offset },
+      end: { key, offset }
+    }
+    this.partialRender()
+    return this.muya.eventCenter.dispatch('stateChange')
+  }
+  // delete current paragraph
+  ContentState.prototype.deleteParagraph = function () {
+    const { start, end } = this.cursor
+    const startOutmostBlock = this.findOutMostBlock(this.getBlock(start.key))
+    const endOutmostBlock = this.findOutMostBlock(this.getBlock(end.key))
+    if (startOutmostBlock !== endOutmostBlock) {
+      // if the cursor is not in one paragraph, just return
+      return
+    }
+    const preBlock = this.getBlock(startOutmostBlock.preSibling)
+    const nextBlock = this.getBlock(startOutmostBlock.nextSibling)
+    let cursorBlock = null
+    if (nextBlock) {
+      cursorBlock = this.firstInDescendant(nextBlock)
+    } else if (preBlock) {
+      cursorBlock = this.lastInDescendant(preBlock)
+    } else {
+      const newBlock = this.createBlockP()
+      this.insertAfter(newBlock, startOutmostBlock)
+      cursorBlock = this.firstInDescendant(newBlock)
+    }
+    this.removeBlock(startOutmostBlock)
+    const { key, text } = cursorBlock
+    const offset = text.length
+    this.cursor = {
+      start: { key, offset },
+      end: { key, offset }
+    }
+    this.partialRender()
+    return this.muya.eventCenter.dispatch('stateChange')
+  }
+
+  ContentState.prototype.selectAll = function () {
+    const { start } = this.cursor
+    const startBlock = this.getBlock(start.key)
+    // const endBlock = this.getBlock(end.key)
+    // handle selectAll in table. only select the startBlock cell...
+    if (/th|td/.test(startBlock.type)) {
+      const { key } = start
+      const textLength = startBlock.text.length
+      this.cursor = {
+        start: {
+          key,
+          offset: 0
+        },
+        end: {
+          key,
+          offset: textLength
+        }
+      }
+      return this.partialRender()
+    }
+    // Handler selectAll in code block. only select all the code block conent.
+    // `code block` here is Math, HTML, BLOCK CODE, Mermaid, vega-lite, flowchart, front-matter etc...
+    if (startBlock.type === 'span' && startBlock.functionType === 'codeLine') {
+      const codeBlock = this.getParent(startBlock)
+      const firstCodeLine = this.firstInDescendant(codeBlock)
+      const lastCodeLine = this.lastInDescendant(codeBlock)
+      this.cursor = {
+        start: {
+          key: firstCodeLine.key,
+          offset: 0
+        },
+        end: {
+          key: lastCodeLine.key,
+          offset: lastCodeLine.text.length
+        }
+      }
+      return this.partialRender()
+    }
+    // Handler language input, only select language info only...
+    if (startBlock.type === 'span' && startBlock.functionType === 'languageInput') {
+      this.cursor = {
+        start: {
+          key: startBlock.key,
+          offset: 0
+        },
+        end: {
+          key: startBlock.key,
+          offset: startBlock.text.length
+        }
+      }
+      return this.partialRender()
+    }
+    const firstTextBlock = this.getFirstBlock()
+    const lastTextBlock = this.getLastBlock()
+    this.cursor = {
+      start: {
+        key: firstTextBlock.key,
+        offset: 0
+      },
+      end: {
+        key: lastTextBlock.key,
+        offset: lastTextBlock.text.length
+      }
+    }
+    this.render()
   }
 }
 

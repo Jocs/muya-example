@@ -1,12 +1,13 @@
 import selection from '../selection'
-import { HTML_TAGS, VOID_HTML_TAGS } from '../config'
+import { HTML_TAGS, VOID_HTML_TAGS, HAS_TEXT_BLOCK_REG } from '../config'
+import { tokenizer } from '../parser'
 
 /**
  * parseSelector
  * div#id.className => {tag: 'div', id: 'id', className: 'className', isVoid: false}
  */
 
-const parseSelector = str => {
+const parseSelector = (str = '') => {
   const REG_EXP = /(#|\.)([^#.]+)/
   let tag = ''
   let id = ''
@@ -35,9 +36,13 @@ const parseSelector = str => {
   return { tag, id, className, isVoid }
 }
 
+const BOTH_SIDES_FORMATS = ['strong', 'em', 'inline_code', 'image', 'link', 'reference_image', 'reference_link', 'emoji', 'del', 'html_tag', 'inline_math']
+
 const tabCtrl = ContentState => {
   ContentState.prototype.findNextCell = function (block) {
-    if (!(/td|th/.test(block.type))) throw new Error('only th and td can have next cell')
+    if (!(/td|th/.test(block.type))) {
+      throw new Error('only th and td can have next cell')
+    }
     const nextSibling = this.getBlock(block.nextSibling)
     const parent = this.getBlock(block.parent)
     const tbOrTh = this.getBlock(parent.parent)
@@ -175,11 +180,103 @@ const tabCtrl = ContentState => {
     }
   }
 
+  ContentState.prototype.checkCursorAtEndFormat = function (text, offset) {
+    const { labels } = this.stateRender
+    const tokens = tokenizer(text, [], false, labels)
+    let result = null
+    const walkTokens = tkns => {
+
+      for (const token of tkns) {
+        const { marker, type, range, children, srcAndTitle, hrefAndTitle, backlash, closeTag, isFullLink, label } = token
+        const { start, end } = range
+        if (BOTH_SIDES_FORMATS.includes(type) && offset > start && offset < end) {
+          switch (type) {
+            case 'strong':
+            case 'em':
+            case 'inline_code':
+            case 'emoji':
+            case 'del':
+            case 'inline_math': {
+              if (marker && offset === end - marker.length) {
+                result = {
+                  offset: marker.length
+                }
+                return
+              }
+              break
+            }
+            case 'image':
+            case 'link': {
+              const linkTitleLen = (srcAndTitle || hrefAndTitle).length
+              const secondLashLen = backlash && backlash.second ? backlash.second.length : 0
+              if (offset === end - 3 - (linkTitleLen + secondLashLen)) {
+                result = {
+                  offset: 2
+                }
+                return
+              } else if (offset === end - 1) {
+                result = {
+                  offset: 1
+                }
+                return
+              }
+              break
+            }
+            case 'reference_image':
+            case 'reference_link': {
+              const labelLen = label ? label.length : 0
+              const secondLashLen = backlash && backlash.second ? backlash.second.length : 0
+              if (isFullLink) {
+                if (offset === end - 3 - labelLen - secondLashLen) {
+                  result = {
+                    offset: 2
+                  }
+                  return
+                } else if (offset === end - 1) {
+                  result = {
+                    offset: 1
+                  }
+                  return
+                }
+              } else if (offset === end - 1) {
+                result = {
+                  offset: 1
+                }
+                return
+              }
+              break
+            }
+            case 'html_tag': {
+              if (closeTag && offset === end - closeTag.length) {
+                result = {
+                  offset: closeTag.length
+                }
+                return
+              }
+              break
+            }
+            default:
+              break
+          }
+        }
+        if (children && children.length) {
+          walkTokens(children)
+        }
+      }
+    }
+    walkTokens(tokens)
+
+    return result
+  }
+
   ContentState.prototype.tabHandler = function (event) {
     // disable tab focus
     event.preventDefault()
 
     const { start, end } = selection.getCursorRange()
+    if (!start || !end) {
+      return
+    }
     const startBlock = this.getBlock(start.key)
     const endBlock = this.getBlock(end.key)
 
@@ -191,18 +288,40 @@ const tabCtrl = ContentState => {
       return
     }
 
+    // Handle `tab` to jump to the end of format when the cursor is at the end of format content.
+    if (
+      start.key === end.key &&
+      start.offset === end.offset &&
+      HAS_TEXT_BLOCK_REG.test(startBlock.type) &&
+      startBlock.functionType !== 'codeLine' && // code line has no inline syntax
+      startBlock.functionType !== 'languageInput' // language input textarea has no inline syntax
+    ) {
+      const { text, key } = startBlock
+      const { offset } = start
+      const atEnd = this.checkCursorAtEndFormat(text, offset)
+      if (atEnd) {
+        this.cursor = {
+          start: { key, offset: offset + atEnd.offset },
+          end: { key, offset: offset + atEnd.offset }
+        }
+        return this.partialRender()
+      }
+    }
+
+    // Auto-complete of inline html tag and html block and `html` code block.
     if (
       start.key === end.key &&
       start.offset === end.offset &&
       startBlock.type === 'span' &&
-      startBlock.functionType === 'codeLine' &&
-      startBlock.lang === 'markup'
+      (!startBlock.functionType || startBlock.functionType === 'codeLine' && /markup|html|xml|svg|mathml/.test(startBlock.lang))
     ) {
       const { text } = startBlock
-      const lastWord = text.split(/\s+/).pop()
-      const preText = text.substring(0, text.length - lastWord.length)
-      if (lastWord !== '') {
-        const { tag, isVoid, id, className } = parseSelector(lastWord)
+      const lastWordBeforeCursor = text.substring(0, start.offset).split(/\s+/).pop()
+      const { tag, isVoid, id, className } = parseSelector(lastWordBeforeCursor)
+
+      if (tag) {
+        const preText = text.substring(0, start.offset - lastWordBeforeCursor.length)
+        const postText = text.substring(end.offset)
         if (!tag) return
         let html = `<${tag}`
         const key = startBlock.key
@@ -240,7 +359,7 @@ const tabCtrl = ContentState => {
         if (!isVoid) {
           html += `</${tag}>`
         }
-        startBlock.text = preText + html
+        startBlock.text = preText + html + postText
         this.cursor = {
           start: { key, offset: startOffset + preText.length },
           end: { key, offset: endOffset + preText.length }
@@ -249,6 +368,7 @@ const tabCtrl = ContentState => {
       }
     }
 
+    // Handle `tab` key in table cell.
     let nextCell
     if (start.key === end.key && /th|td/.test(startBlock.type)) {
       nextCell = this.findNextCell(startBlock)
@@ -257,10 +377,9 @@ const tabCtrl = ContentState => {
     }
     if (nextCell) {
       const key = nextCell.key
-      const textLength = nextCell.text.length
       this.cursor = {
         start: { key, offset: 0 },
-        end: { key, offset: textLength }
+        end: { key, offset: 0 }
       }
 
       return this.partialRender()

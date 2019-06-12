@@ -1,15 +1,10 @@
 import katex from 'katex'
 import mermaid from 'mermaid'
-import prism, { loadedCache } from '../../../prism/'
-import { CLASS_OR_ID, DEVICE_MEMORY, isInElectron, PREVIEW_DOMPURIFY_CONFIG, HAS_TEXT_BLOCK_REG } from '../../../config'
-import { tokenizer } from '../../parse'
-import { snakeToCamel, sanitize, escapeHtml, getLongUniqueId } from '../../../utils'
+import prism, { loadedCache, transfromAliasToOrigin } from '../../../prism/'
+import { CLASS_OR_ID, DEVICE_MEMORY, PREVIEW_DOMPURIFY_CONFIG, HAS_TEXT_BLOCK_REG } from '../../../config'
+import { tokenizer } from '../../'
+import { snakeToCamel, sanitize, escapeHtml, getLongUniqueId, getImageInfo } from '../../../utils'
 import { h, htmlToVNode } from '../snabbdom'
-import alignLeftIcon from '../../../assets/icons/align_left.svg'
-import alignRightIcon from '../../../assets/icons/align_right.svg'
-import alignCenterIcon from '../../../assets/icons/align_center.svg'
-import tableIcon from '../../../assets/icons/table.svg'
-import deleteIcon from '../../../assets/icons/delete.svg'
 
 // todo@jocs any better solutions?
 const MARKER_HASK = {
@@ -17,14 +12,6 @@ const MARKER_HASK = {
   '>': `%${getLongUniqueId()}%`,
   '"': `%${getLongUniqueId()}%`,
   "'": `%${getLongUniqueId()}%`
-}
-
-const ICON_MAP = {
-  'icon-alignright': alignRightIcon,
-  'icon-alignleft': alignLeftIcon,
-  'icon-del': deleteIcon,
-  'icon-table': tableIcon,
-  'icon-aligncenter': alignCenterIcon
 }
 
 const getHighlightHtml = (text, highlights, escape = false) => {
@@ -45,30 +32,49 @@ const getHighlightHtml = (text, highlights, escape = false) => {
   return code
 }
 
-export default function renderLeafBlock (block, cursor, activeBlocks, matches, useCache = false) {
+const hasReferenceToken = tokens => {
+  let result = false
+  const travel = tokens => {
+    for (const token of tokens) {
+      if (/reference_image|reference_link/.test(token.type)) {
+        result = true
+        break
+      }
+      if (Array.isArray(token.children) && token.children.length) {
+        travel(token.children)
+      }
+    }
+  }
+  travel(tokens)
+  return result
+}
+
+export default function renderLeafBlock (block, activeBlocks, matches, useCache = false) {
   const { loadMathMap } = this
-  let selector = this.getSelector(block, cursor, activeBlocks)
+  const { cursor } = this.muya.contentState
+  let selector = this.getSelector(block, activeBlocks)
   // highlight search key in block
   const highlights = matches.filter(m => m.key === block.key)
   const {
     text,
     type,
-    headingStyle,
     align,
-    icon,
     checked,
     key,
     lang,
     functionType,
     editable
   } = block
+
   const data = {
     props: {},
     attrs: {},
     dataset: {},
     style: {}
   }
+
   let children = ''
+
   if (text) {
     let tokens = []
     if (highlights.length === 0 && this.tokenCache.has(text)) {
@@ -78,12 +84,14 @@ export default function renderLeafBlock (block, cursor, activeBlocks, matches, u
       functionType !== 'codeLine' &&
       functionType !== 'languageInput'
     ) {
-      const hasBeginRules = /^(h\d|span|hr)/.test(type)
-      tokens = tokenizer(text, highlights, hasBeginRules)
-      if (highlights.length === 0 && useCache && DEVICE_MEMORY >= 4) {
+      const hasBeginRules = type === 'span'
+      tokens = tokenizer(text, highlights, hasBeginRules, this.labels)
+      const hasReferenceTokens = hasReferenceToken(tokens)
+      if (highlights.length === 0 && useCache && DEVICE_MEMORY >= 4 && !hasReferenceTokens) {
         this.tokenCache.set(text, tokens)
       }
     }
+
     children = tokens.reduce((acc, token) => [...acc, ...this[snakeToCamel(token.type)](h, cursor, block, token)], [])
   }
 
@@ -98,16 +106,25 @@ export default function renderLeafBlock (block, cursor, activeBlocks, matches, u
       style: `text-align:${align}`
     })
   } else if (type === 'div') {
-    const code = this.muya.contentState.codeBlocks.get(block.preSibling)
+    const code = this.codeCache.get(block.preSibling)
     switch (functionType) {
-      case 'preview': {
+      case 'html': {
         selector += `.${CLASS_OR_ID['AG_HTML_PREVIEW']}`
         const htmlContent = sanitize(code, PREVIEW_DOMPURIFY_CONFIG)
         // handle empty html bock
-        if (/<([a-z][a-z\d]*).*>\s*<\/\1>/.test(htmlContent)) {
+        if (/^<([a-z][a-z\d]*)[^>]*?>(\s*)<\/\1>$/.test(htmlContent.trim())) {
           children = htmlToVNode('<div class="ag-empty">&lt;Empty HTML Block&gt;</div>')
         } else {
-          children = htmlToVNode(htmlContent)
+          const parser = new DOMParser()
+          const doc = parser.parseFromString(htmlContent, 'text/html')
+          const imgs = doc.documentElement.querySelectorAll('img')
+          for (const img of imgs) {
+            const src = img.getAttribute('src')
+            const imageInfo = getImageInfo(src)
+            img.setAttribute('src', imageInfo.src)
+          }
+
+          children = htmlToVNode(doc.documentElement.querySelector('body').innerHTML)
         }
         break
       }
@@ -154,7 +171,6 @@ export default function renderLeafBlock (block, cursor, activeBlocks, matches, u
       case 'flowchart':
       case 'sequence':
       case 'vega-lite': {
-        const code = this.muya.contentState.codeBlocks.get(block.preSibling)
         selector += `.${CLASS_OR_ID['AG_CONTAINER_PREVIEW']}`
         if (code === '') {
           children = '< Empty Diagram Block >'
@@ -169,32 +185,6 @@ export default function renderLeafBlock (block, cursor, activeBlocks, matches, u
         break
       }
     }
-  } else if (type === 'svg' && icon) {
-    selector += '.icon'
-    const iconSvg = ICON_MAP[icon]
-    Object.assign(data.attrs, {
-      'viewBox': iconSvg.viewBox,
-      'aria-hidden': 'true'
-    })
-
-    children = [
-      h('use', {
-        attrs: {
-          'xlink:href': `.${iconSvg.url}`
-        }
-      })
-    ]
-  } else if (/^h/.test(type)) {
-    if (/^h\d$/.test(type)) {
-      Object.assign(data.dataset, {
-        head: type,
-        id: isInElectron ? require('markdown-toc').slugify(text.replace(/^#+\s(.*)/, (_, p1) => p1)) : ''
-      })
-      selector += `.${headingStyle}`
-    }
-    Object.assign(data.dataset, {
-      role: type
-    })
   } else if (type === 'input') {
     Object.assign(data.attrs, {
       type: 'checkbox'
@@ -213,16 +203,16 @@ export default function renderLeafBlock (block, cursor, activeBlocks, matches, u
       .replace(new RegExp(MARKER_HASK['>'], 'g'), '>')
       .replace(new RegExp(MARKER_HASK['"'], 'g'), '"')
       .replace(new RegExp(MARKER_HASK["'"], 'g'), "'")
+    // transfrom alias to original language
+    const transformedLang = transfromAliasToOrigin([lang])[0]
 
-    selector += `.${CLASS_OR_ID['AG_CODE_LINE']}`
-
-    if (lang && /\S/.test(code) && loadedCache.has(lang)) {
+    if (transformedLang && /\S/.test(code) && loadedCache.has(transformedLang)) {
       const wrapper = document.createElement('div')
-      wrapper.classList.add(`language-${lang}`)
+      wrapper.classList.add(`language-${transformedLang}`)
       wrapper.innerHTML = code
       prism.highlightElement(wrapper, false, function () {
         const highlightedCode = this.innerHTML
-        selector += `.language-${lang}`
+        selector += `.language-${transformedLang}`
         children = htmlToVNode(highlightedCode)
       })
     } else {
@@ -230,9 +220,11 @@ export default function renderLeafBlock (block, cursor, activeBlocks, matches, u
     }
   } else if (type === 'span' && functionType === 'languageInput') {
     const html = getHighlightHtml(text, highlights)
-    selector += `.${CLASS_OR_ID['AG_LANGUAGE_INPUT']}`
     children = htmlToVNode(html)
   }
-
-  return h(selector, data, children)
+  if (!block.parent) {
+    return h(selector, data, [this.renderIcon(block), ...children])
+  } else {
+    return h(selector, data, children)
+  } 
 }

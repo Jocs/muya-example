@@ -2,6 +2,17 @@ import { EVENT_KEYS, CLASS_OR_ID } from '../config'
 import { findNearestParagraph } from '../selection/dom'
 import selection from '../selection'
 
+// If the next block is header, put cursor after the `#{1,6} *` 
+const adjustOffset = (offset, block, event) => {
+  if (/^span$/.test(block.type) && block.functionType === 'atxLine' && event.key === EVENT_KEYS.ArrowDown) {
+    const match = /^\s{0,3}(?:#{1,6})(?:\s{1,}|$)/.exec(block.text)
+    if (match) {
+      return match[0].length
+    }
+  }
+  return offset
+}
+
 const arrowCtrl = ContentState => {
   ContentState.prototype.findNextRowCell = function (cell) {
     if (!/th|td/.test(cell.type)) {
@@ -42,17 +53,48 @@ const arrowCtrl = ContentState => {
     return null
   }
 
+  ContentState.prototype.docArrowHandler = function (event) {
+    const { selectedImage } = this
+    if (selectedImage) {
+      const { key, token } = selectedImage
+      const { start, end } = token.range
+      event.preventDefault()
+      event.stopPropagation()
+      const block = this.getBlock(key)
+      switch (event.key) {
+        case EVENT_KEYS.ArrowUp:
+        case EVENT_KEYS.ArrowLeft: {
+          this.cursor = {
+            start: { key, offset: start },
+            end: { key, offset: start }
+          }
+          break
+        }
+        case EVENT_KEYS.ArrowDown:
+        case EVENT_KEYS.ArrowRight: {
+          this.cursor = {
+            start: { key, offset: end },
+            end: { key, offset: end }
+          }
+          break
+        }
+      }
+      return this.singleRender(block)
+    }
+  }
+
   ContentState.prototype.arrowHandler = function (event) {
     const node = selection.getSelectionStart()
     const paragraph = findNearestParagraph(node)
     const id = paragraph.id
     const block = this.getBlock(id)
-
     const preBlock = this.findPreBlockInLocation(block)
     const nextBlock = this.findNextBlockInLocation(block)
-
     const { start, end } = selection.getCursorRange()
     const { topOffset, bottomOffset } = selection.getCursorYOffset(paragraph)
+    if (!start || !end) {
+      return
+    }
 
     // fix #101
     if (event.key === EVENT_KEYS.ArrowRight && node && node.classList && node.classList.contains(CLASS_OR_ID['AG_MATH_TEXT'])) {
@@ -63,10 +105,10 @@ const arrowCtrl = ContentState => {
       }
     }
 
-    // Just do nothing if the cursor is not collapsed
+    // Just do nothing if the cursor is not collapsed or `shiftKey` pressed
     if (
       (start.key === end.key && start.offset !== end.offset) ||
-      start.key !== end.key
+      start.key !== end.key || event.shiftKey
     ) {
       return
     }
@@ -104,11 +146,13 @@ const arrowCtrl = ContentState => {
       if (activeBlock) {
         event.preventDefault()
         event.stopPropagation()
-        const offset = activeBlock.type === 'p'
+        let offset = activeBlock.type === 'p'
           ? 0
           : (event.key === EVENT_KEYS.ArrowUp
             ? activeBlock.text.length
             : 0)
+        
+        offset = adjustOffset(offset, activeBlock, event)
 
         const key = activeBlock.type === 'p'
           ? activeBlock.children[0].key
@@ -160,7 +204,7 @@ const arrowCtrl = ContentState => {
         this.insertAfter(newBlock, lastBlock)
         key = newBlock.children[0].key
       }
-      const offset = 0
+      const offset = adjustOffset(0, nextBlock || newBlock, event)
       this.cursor = {
         start: { key, offset },
         end: { key, offset }

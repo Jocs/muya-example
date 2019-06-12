@@ -1,5 +1,7 @@
-import { sanitize } from '../utils'
-import { PARAGRAPH_TYPES, PREVIEW_DOMPURIFY_CONFIG } from '../config'
+
+import { PARAGRAPH_TYPES, PREVIEW_DOMPURIFY_CONFIG, HAS_TEXT_BLOCK_REG, IMAGE_EXT_REG } from '../config'
+import { sanitize, getUniqueId, getImageInfo as getImageSrc } from '../utils'
+import { getImageInfo } from '../utils/getImageInfo'
 
 const LIST_REG = /ul|ol/
 const LINE_BREAKS_REG = /\n/
@@ -8,21 +10,33 @@ const pasteCtrl = ContentState => {
   // check paste type: `MERGE` or `NEWLINE`
   ContentState.prototype.checkPasteType = function (start, fragment) {
     const fragmentType = fragment.type
-    if (start.type === 'span') {
-      start = this.getParent(start)
-    }
-    if (fragmentType === 'p') return 'MERGE'
-    if (fragmentType === 'blockquote') return 'NEWLINE'
-    let parent = this.getParent(start)
-    if (parent && parent.type === 'li') parent = this.getParent(parent)
-    let startType = start.type
-    if (start.type === 'p') {
-      startType = parent ? parent.type : startType
-    }
-    if (LIST_REG.test(fragmentType) && LIST_REG.test(startType)) {
+    const parent = this.getParent(start)
+
+    if (fragmentType === 'p') {
       return 'MERGE'
+    } else if (/^h\d/.test(fragmentType)) {
+      if (start.text) {
+        return 'MERGE'
+      } else {
+        return 'NEWLINE'
+      }
+    } else if (LIST_REG.test(fragmentType)) {
+      const listItem = this.getParent(parent)
+      const list = listItem && listItem.type === 'li' ? this.getParent(listItem) : null
+      if (list) {
+        if (
+          list.listType === fragment.listType &&
+          listItem.bulletMarkerOrDelimiter === fragment.children[0].bulletMarkerOrDelimiter  
+        ) {
+          return 'MERGE'
+        } else {
+          return 'NEWLINE'
+        }
+      } else {
+        return 'NEWLINE'
+      }
     } else {
-      return startType === fragmentType ? 'MERGE' : 'NEWLINE'
+      return 'NEWLINE'
     }
   }
 
@@ -65,23 +79,131 @@ const pasteCtrl = ContentState => {
     return tempWrapper.innerHTML
   }
 
+  ContentState.prototype.pasteImage = async function (event) {
+    // Try to guess the clipboard file path.
+    const imagePath = this.muya.options.clipboardFilePath()
+    if (imagePath && typeof imagePath === 'string' && IMAGE_EXT_REG.test(imagePath)) {
+      const id = `loading-${getUniqueId()}`
+      if (this.selectedImage) {
+        this.replaceImage(this.selectedImage, {
+          alt: id,
+          src: imagePath,
+        })
+      } else {
+        this.insertImage({
+          alt: id,
+          src: imagePath
+        })
+      }
+      const nSrc = await this.muya.options.imageAction(imagePath)
+      const { src } = getImageSrc(imagePath)
+      if (src) {
+        this.stateRender.urlMap.set(nSrc, src)
+      }
+
+      const imageWrapper = this.muya.container.querySelector(`span[data-id=${id}]`)
+
+      if (imageWrapper) {
+        const imageInfo = getImageInfo(imageWrapper)
+        this.replaceImage(imageInfo, {
+          src: nSrc
+        })
+      }
+      return imagePath
+    }
+
+    const items = event.clipboardData && event.clipboardData.items
+    let file = null
+    if (items && items.length) {
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          file = items[i].getAsFile()
+          break
+        }
+      }
+    }
+
+    // handle paste to create inline image
+    if (file) {
+      const id = `loading-${getUniqueId()}`
+      if (this.selectedImage) {
+        this.replaceImage(this.selectedImage, {
+          alt: id,
+          src: ''
+        })
+      } else {
+        this.insertImage({
+          alt: id,
+          src: ''
+        })
+      }
+
+      const reader = new FileReader()
+      reader.onload = event => {
+        const base64 = event.target.result
+        const imageWrapper = this.muya.container.querySelector(`span[data-id=${id}]`)
+        const imageContainer = this.muya.container.querySelector(`span[data-id=${id}] .ag-image-container`)
+        this.stateRender.urlMap.set(id, base64)
+        if (imageContainer) {
+          imageWrapper.classList.remove('ag-empty-image')
+          imageWrapper.classList.add('ag-image-success')
+          const image = document.createElement('img')
+          image.src = base64
+          imageContainer.appendChild(image)
+        }
+      }
+      reader.readAsDataURL(file)
+
+      const nSrc = await this.muya.options.imageAction(file)
+      const base64 = this.stateRender.urlMap.get(id)
+      if (base64) {
+        this.stateRender.urlMap.set(nSrc, base64)
+        this.stateRender.urlMap.delete(id)
+      }
+      const imageWrapper = this.muya.container.querySelector(`span[data-id=${id}]`)
+
+      if (imageWrapper) {
+        const imageInfo = getImageInfo(imageWrapper)
+        this.replaceImage(imageInfo, {
+          src: nSrc
+        })
+      }
+      return file
+    }
+    return null
+  }
+
+  ContentState.prototype.docPasteHandler = async function (event) {
+    const file = await this.pasteImage(event)
+    if (file) {
+      return event.preventDefault()
+    }
+  }
+
   // handle `normal` and `pasteAsPlainText` paste
-  ContentState.prototype.pasteHandler = function (event, type) {
+  ContentState.prototype.pasteHandler = async function (event, type = 'normal', rawText, rawHtml) {
     event.preventDefault()
-    const text = event.clipboardData.getData('text/plain')
-    let html = event.clipboardData.getData('text/html')
+    event.stopPropagation()
+    const text = rawText || event.clipboardData.getData('text/plain')
+    let html = rawHtml || event.clipboardData.getData('text/html')
     html = this.standardizeHTML(html)
     const copyType = this.checkCopyType(html, text)
     const { start, end } = this.cursor
     const startBlock = this.getBlock(start.key)
     const endBlock = this.getBlock(end.key)
     const parent = this.getParent(startBlock)
+
     if (start.key !== end.key) {
       this.cutHandler()
       return this.pasteHandler(event, type)
     }
 
-    const appendHtml = () => {
+    const file = await this.pasteImage(event)
+    if (file) {
+      return
+    }
+
+    const appendHtml = (text) => {
       startBlock.text = startBlock.text.substring(0, start.offset) + text + startBlock.text.substring(start.offset)
       const { key } = start
       const offset = start.offset + text.length
@@ -89,6 +211,39 @@ const pasteCtrl = ContentState => {
         start: { key, offset },
         end: { key, offset }
       }
+    }
+
+    // Extract the first line from the language identifier (GH#553)
+    if (startBlock.type === 'span' && startBlock.functionType === 'languageInput') {
+      let language = text.trim().match(/^.*$/m)[0] || ''
+      const oldLanguageLength = startBlock.text.length
+      let offset = 0
+      if (start.offset !== 0 || end.offset !== oldLanguageLength) {
+        const prePartText = startBlock.text.substring(0, start.offset)
+        const postPartText = startBlock.text.substring(end.offset)
+
+        // Expect that the language doesn't contain new lines
+        language = prePartText + language + postPartText
+        offset = prePartText.length + language.length
+      } else {
+        offset = language.length
+      }
+
+      startBlock.text = language
+
+      const key = startBlock.key
+      this.cursor = {
+        start: { key, offset },
+        end: { key, offset }
+      }
+
+      // Hide code picker float box
+      const { eventCenter } = this.muya
+      eventCenter.dispatch('muya-code-picker', { reference: null })
+
+      // Update code block language and render
+      this.updateCodeLanguage(startBlock, language)
+      return
     }
 
     if (startBlock.type === 'span' && startBlock.functionType === 'codeLine') {
@@ -103,7 +258,7 @@ const pasteCtrl = ContentState => {
             startBlock.text = prePartText + line
           } else {
             line = i === textList.length - 1 ? line + postPartText : line
-            const lineBlock = this.createBlock('span', line)
+            const lineBlock = this.createBlock('span', { text: line })
             lineBlock.functionType = startBlock.functionType
             lineBlock.lang = startBlock.lang
             this.insertAfter(lineBlock, referenceBlock)
@@ -127,13 +282,12 @@ const pasteCtrl = ContentState => {
           end: { key, offset }
         }
       }
-      this.updateCodeBlocks(startBlock)
       return this.partialRender()
     }
 
     if (/th|td/.test(startBlock.type)) {
       const pendingText = text.trim().replace(/\n/g, '<br/>')
-      startBlock.text += pendingText
+      startBlock.text = startBlock.text.substring(0, start.offset) + pendingText + startBlock.text.substring(end.offset)
       const { key } = startBlock
       const offset = start.offset + pendingText.length
       this.cursor = {
@@ -147,28 +301,28 @@ const pasteCtrl = ContentState => {
     if (copyType === 'copyAsHtml') {
       switch (type) {
         case 'normal': {
-          if (startBlock.type === 'span' && this.isOnlyChild(startBlock) && !startBlock.text) {
-            this.codeBlockUpdate(startBlock, text.trim(), 'html')
-          } else {
-            appendHtml()
-          }
+          const htmlBlock = this.createBlockP(text.trim())
+          this.insertAfter(htmlBlock, parent)
+          this.removeBlock(parent)
+          // handler heading
+          this.insertHtmlBlock(htmlBlock)
           break
         }
         case 'pasteAsPlainText': {
-          if (startBlock.type === 'span') {
-            const lines = text.trim().split(LINE_BREAKS_REG).map(line => this.createBlock('span', line))
-            for (const line of lines) {
-              this.appendChild(parent, line)
-            }
-            const lastLine = lines[lines.length - 1]
-            const { key } = lastLine
-            const offset = lastLine.text.length
-            this.cursor = {
-              start: { key, offset },
-              end: { key, offset }
-            }
+          const lines = text.trim().split(LINE_BREAKS_REG)
+          let htmlBlock = null
+          
+          if (!startBlock.text || lines.length > 1) {
+            htmlBlock = this.createBlockP((startBlock.text ? lines.slice(1) : lines).join('\n'))
+          }
+          if (htmlBlock) {
+            this.insertAfter(htmlBlock, parent)
+            this.insertHtmlBlock(htmlBlock)
+          }
+          if (startBlock.text) {
+            appendHtml(lines[0])
           } else {
-            appendHtml()
+            this.removeBlock(parent)
           }
           break
         }
@@ -194,31 +348,44 @@ const pasteCtrl = ContentState => {
       const len = blocks.length
       const lastBlock = blocks[len - 1]
 
-      if (lastBlock.children.length === 0) {
+      if (lastBlock.children.length === 0 && HAS_TEXT_BLOCK_REG.test(lastBlock.type)) {
         return lastBlock
       } else {
-        return getLastBlock(lastBlock.children)
+        if (lastBlock.editable === false) {
+          return getLastBlock(blocks[len - 2].children)
+        } else {
+          return getLastBlock(lastBlock.children)
+        }
       }
     }
 
     const lastBlock = getLastBlock(stateFragments)
-
     let key = lastBlock.key
     let offset = lastBlock.text.length
     lastBlock.text += cacheText
 
     switch (pasteType) {
-      case 'MERGE':
+      case 'MERGE': {
         if (LIST_REG.test(firstFragment.type)) {
           const listItems = firstFragment.children
           const firstListItem = listItems[0]
           const liChildren = firstListItem.children
           const originListItem = this.getParent(parent)
           const originList = this.getParent(originListItem)
+          const targetListType = firstFragment.children[0].isLooseListItem
+          const originListType = originList.children[0].isLooseListItem
+          // No matter copy loose list to tight list or vice versa, the result is one loose list.
+          if (targetListType !== originListType) {
+            if (!targetListType) {
+              firstFragment.children.forEach(item => item.isLooseListItem = true)
+            } else {
+              originList.children.forEach(item => item.isLooseListItem = true)
+            }
+          }
+
           if (liChildren[0].type === 'p') {
             // TODO @JOCS
             startBlock.text += liChildren[0].children[0].text
-            liChildren[0].children.slice(1).forEach(c => this.appendChild(parent, c))
             const tail = liChildren.slice(1)
             if (tail.length) {
               tail.forEach(t => {
@@ -241,41 +408,42 @@ const pasteCtrl = ContentState => {
             this.insertAfter(block, target)
             target = block
           })
-        } else {
-          if (firstFragment.type === 'p') {
-            startBlock.text += firstFragment.children[0].text
-            firstFragment.children.slice(1).forEach(line => {
-              if (startBlock.functionType) line.functionType = startBlock.functionType
-              if (startBlock.lang) line.lang = startBlock.lang
-              this.appendChild(parent, line)
-            })
-          } else if (/^h\d$/.test(firstFragment.type)) {
-            startBlock.text += firstFragment.text.split(/\s+/)[1]
-          } else {
-            startBlock.text += firstFragment.text
-          }
-
+        } else if (firstFragment.type === 'p' || /^h\d/.test(firstFragment.type)) {
+          const text = firstFragment.children[0].text
+          const lines = text.split('\n')
           let target = parent
+          if (parent.headingStyle === 'atx') {
+            startBlock.text += lines[0]
+            if (lines.length > 1) {
+              const pBlock = this.createBlockP(lines.slice(1).join('\n'))
+              this.insertAfter(parent, pBlock)
+              target = pBlock
+            }
+          } else {
+            startBlock.text += text
+          }
+          
           tailFragments.forEach(block => {
             this.insertAfter(block, target)
             target = block
           })
         }
         break
-
-      case 'NEWLINE':
-        let target = startBlock.type === 'span' ? parent : startBlock
+      }
+      case 'NEWLINE': {
+        let target = parent
         stateFragments.forEach(block => {
           this.insertAfter(block, target)
           target = block
         })
         if (startBlock.text.length === 0) {
-          this.removeBlock(startBlock)
-          if (this.isOnlyChild(startBlock) && startBlock.type === 'span') this.removeBlock(parent)
+          this.removeBlock(parent)
         }
         break
-      default:
+      }
+      default: {
         throw new Error('unknown paste type')
+      }
     }
     // step 3: set cursor and render
     let cursorBlock = this.getBlock(key)
@@ -284,10 +452,7 @@ const pasteCtrl = ContentState => {
       offset = startBlock.text.length - cacheText.length
       cursorBlock = startBlock
     }
-    // TODO @Jocs duplicate with codes in updateCtrl.js
-    if (cursorBlock && cursorBlock.type === 'span' && cursorBlock.functionType === 'codeLine') {
-      this.updateCodeBlocks(cursorBlock)
-    }
+
     this.cursor = {
       start: {
         key, offset
