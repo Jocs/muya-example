@@ -1,2 +1,0 @@
-(window["webpackJsonp"]=window["webpackJsonp"]||[]).push([["chunk-2d0cfcc0"],{"64f2":function(e,n){(function(e){e.languages.erb=e.languages.extend("ruby",{}),e.languages.insertBefore("erb","comment",{delimiter:{pattern:/^<%=?|%>$/,alias:"punctuation"}}),e.hooks.add("before-tokenize",function(n){var a=/<%=?[\s\S]+?%>/g;e.languages["markup-templating"].buildPlaceholders(n,"erb",a)}),e.hooks.add("after-tokenize",function(n){e.languages["markup-templating"].tokenizePlaceholders(n,"erb")})})(Prism)}}]);
-//# sourceMappingURL=chunk-2d0cfcc0.1521837d.js.map

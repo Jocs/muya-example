@@ -63,7 +63,7 @@ class Muya {
     const config = { childList: true, subtree: true }
 
     // Callback function to execute when mutations are observed
-    const callback = function(mutationsList, observer) {
+    const callback = (mutationsList, observer) => {
       for(const mutation of mutationsList) {
         if (mutation.type === 'childList') {
           const { removedNodes, target } = mutation
@@ -73,6 +73,11 @@ class Muya {
             const hasTable = Array.from(removedNodes).some(node => node.nodeType === 1 && node.closest('table.ag-paragraph'))
             if (hasTable) {
               console.warn('There was a problem with the table deletion.')
+            }
+            const lineRemovedUnExpected = Array.from(removedNodes).some(node => node.nodeType === 1 && node.classList.contains('ag-paragraph-content'))
+              && this.keyboard.isComposed
+            if (lineRemovedUnExpected) {
+              this.contentState.partialRender()
             }
           }
 
@@ -152,6 +157,13 @@ class Muya {
     setTimeout(() => {
       this.dispatchChange()
     }, 0)
+  }
+
+  setCursor (cursor) {
+    const markdown = this.getMarkdown()
+    const isRenderCursor = true
+
+    return this.setMarkdown(markdown, cursor, isRenderCursor)
   }
 
   createTable (tableChecker) {
@@ -311,6 +323,7 @@ class Muya {
     if (needRender) {
       this.contentState.render()
     }
+
     // Set quick insert hint visibility
     const hideQuickInsertHint = options['hideQuickInsertHint']
     if (typeof hideQuickInsertHint !== 'undefined') {
@@ -321,6 +334,7 @@ class Muya {
         this.container.classList.add('ag-show-quick-insert-hint')
       }
     }
+
     if (options.bulletListMarker) {
       this.contentState.turndownConfig.bulletListMarker = options.bulletListMarker
     }

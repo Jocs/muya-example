@@ -162,7 +162,8 @@ export const DAED_REMOVE_SELECTOR = new Set([
   '.ag-warn'
 ])
 
-export const CURSOR_DNA = getLongUniqueId()
+export const CURSOR_ANCHOR_DNA = getLongUniqueId()
+export const CURSOR_FOCUS_DNA = getLongUniqueId()
 
 export const DEFAULT_TURNDOWN_CONFIG = {
   headingStyle: 'atx', // setext or atx
@@ -270,3 +271,4 @@ export const isWin = window && window.navigator.userAgent && /win32|wow32|win64|
 export const URL_REG = /^http(s)?:\/\/([a-z0-9\-._~]+\.[a-z]{2,}|[0-9.]+|localhost|\[[a-f0-9.:]+\])(:[0-9]{1,5})?\/[\S]+/i
 // The smallest transparent gif base64 image.
 export const SMALLEST_BASE64 = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+export const isSafari = /safari/i.test(window.navigator.userAgent)

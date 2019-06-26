@@ -36,7 +36,7 @@
           markdown: 'Welcome to use muya...'
         })
         this.editor.on('change', changes => {
-          // console.log(changes)
+          console.log(changes)
         })
       })
     }
