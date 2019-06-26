@@ -3,7 +3,7 @@
  * and customize for specialized use.
  */
 import Cursor from './cursor'
-import { CLASS_OR_ID, isSafari } from '../config'
+import { CLASS_OR_ID, isIOS } from '../config'
 import {
   isBlockContainer,
   traverseUp,
@@ -510,7 +510,7 @@ class Selection {
       focusOffset = anchorOffset
     } else if (!isAnchorValid && !isFocusValid) {
       const noNeedBlur = anchorNode.nodeType === 1 && !!anchorNode.querySelector('br') && anchorOffset === 1
-      if (!isSafari || !noNeedBlur) {
+      if (!isIOS || !noNeedBlur) {
         const editor = document.querySelector('#ag-editor-id').parentNode
         editor.blur()
       }
