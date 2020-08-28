@@ -10,7 +10,7 @@
   "dependencies": {
     "@hfelix/electron-localshortcut": "^3.1.1",
     "axios": "^0.18.0",
-    "dompurify": "^1.0.10",
+    "dompurify": "^2.0.3",
     "element-resize-detector": "^1.2.0",
     "file-icons-js": "^1.0.3",
     "flowchart.js": "^1.11.3",
